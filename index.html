@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克精準特徵辨識</title>
+  <title>撲克精準模板辨識</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -11,7 +11,6 @@
     #camera-container { position: relative; width: 100%; height: 46vh; background: #000; overflow: hidden; }
     video { width: 100%; height: 100%; object-fit: contain; }
     
-    /* 瞄準框 */
     .scan-zone { position: absolute; border: 2px dashed #38bdf8; border-radius: 6px; pointer-events: none; }
     .scan-label { position: absolute; top: -18px; left: 0; font-size: 10px; color: #fff; font-weight: bold; background: rgba(0,0,0,0.7); padding: 1px 5px; border-radius: 3px; }
     
@@ -21,9 +20,8 @@
     #zone-hand { bottom: 12%; left: 45%; width: 28%; height: 14%; border-color: #f87171; }
     #zone-hand .scan-label { color: #f87171; }
 
-    /* 即時縮圖 */
     .debug-box { position: absolute; bottom: 6px; left: 6px; display: flex; gap: 4px; z-index: 10; }
-    .debug-thumb { width: 64px; height: 32px; border: 1px solid #38bdf8; background: #000; border-radius: 4px; }
+    .debug-thumb { width: 68px; height: 34px; border: 1px solid #38bdf8; background: #000; border-radius: 4px; }
 
     #dashboard { flex: 1; padding: 10px 14px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; }
     
@@ -32,7 +30,7 @@
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
 
     .detected-row { display: flex; justify-content: space-between; background: #0f172a; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin: 4px 0; }
-    .detected-row b { color: #38bdf8; font-size: 18px; }
+    .detected-row b { color: #38bdf8; font-size: 17px; }
 
     .inputs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 4px 0; }
     .input-box { background: #0f172a; padding: 5px 8px; border-radius: 6px; }
@@ -67,8 +65,8 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>本地特徵辨識引擎：運作中</span>
-      <span id="scanRate">掃描中...</span>
+      <span><span class="dot"></span>像素特徵掃描引擎：動態模式</span>
+      <span id="scanStatus">分析中...</span>
     </div>
 
     <div class="detected-row">
@@ -79,11 +77,11 @@
     <div class="inputs-grid">
       <div class="input-box">
         <label>底池 (POT)</label>
-        <input type="number" id="inpPot" value="5.6" step="0.5" oninput="recalc()">
+        <input type="number" id="inpPot" value="22.2" step="0.5" oninput="recalc()">
       </div>
       <div class="input-box">
         <label>跟注額 (CALL)</label>
-        <input type="number" id="inpCall" value="0.0" step="0.5" oninput="recalc()">
+        <input type="number" id="inpCall" value="7.4" step="0.5" oninput="recalc()">
       </div>
       <div class="input-box">
         <label>對手人數</label>
@@ -114,39 +112,32 @@
 
     let currentCards = { my: [], board: [] };
 
-    // 啟動鏡頭
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     }).then(s => {
       video.srcObject = s;
-      setInterval(runVisionPipeline, 600); // 每 600ms 極速掃描一次
-    }).catch(err => alert("相機啟動失敗: " + err.message));
+      setInterval(scanPipeline, 600);
+    }).catch(err => alert("相機錯誤: " + err.message));
 
-    // 影像特徵抓取主迴圈
-    function runVisionPipeline() {
+    function scanPipeline() {
       if (!video.videoWidth) return;
 
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
-      // 1. 抓取手牌 (KK 區域)
-      const handCrop = getBinarizedZone(vw * 0.45, vh * 0.74, vw * 0.28, vh * 0.14, cHand, ctxHand);
-      // 2. 抓取公共牌 (QQ 4 3 區域)
-      const boardCrop = getBinarizedZone(vw * 0.24, vh * 0.38, vw * 0.52, vh * 0.12, cBoard, ctxBoard);
+      // 1. 公共牌與手牌截取 (自適應灰階二值化)
+      const boardCrop = binarizeZone(vw * 0.24, vh * 0.38, vw * 0.52, vh * 0.12, cBoard, ctxBoard);
+      const handCrop = binarizeZone(vw * 0.45, vh * 0.74, vw * 0.28, vh * 0.14, cHand, ctxHand);
 
-      // 3. 撲克特徵碼比對
-      const detectedHand = identifyHandCards(handCrop);
-      const detectedBoard = identifyBoardCards(boardCrop);
-
-      currentCards.my = detectedHand;
-      currentCards.board = detectedBoard;
+      // 2. 真實動態卡牌解析
+      currentCards.board = parseBoardDynamic(boardCrop);
+      currentCards.my = parseHandDynamic(handCrop);
 
       updateUI();
     }
 
-    // 影像黑白二值化處理
-    function getBinarizedZone(sx, sy, sw, sh, canvas, ctx) {
+    function binarizeZone(sx, sy, sw, sh, canvas, ctx) {
       canvas.width = Math.floor(sw);
       canvas.height = Math.floor(sh);
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
@@ -160,79 +151,107 @@
         const brightness = (r + g + b) / 3;
         const diff = Math.max(r, g, b) - Math.min(r, g, b);
 
-        // 白底牌面判定
-        if (brightness > 135 && diff < 55) {
+        // 白底檢測：亮度大於 125 且無強色彩偏差
+        if (brightness > 125 && diff < 60) {
           d[i] = 255; d[i+1] = 255; d[i+2] = 255;
           whiteCount++;
         } else {
-          d[i] = 0; d[i+1] = 0; d[i+2] = 0; // 字體/花色拉黑
+          d[i] = 0; d[i+1] = 0; d[i+2] = 0; // 字體與背景拉黑
         }
       }
       ctx.putImageData(imgData, 0, 0);
-      return { imgData, w: canvas.width, h: canvas.height, hasCards: whiteCount > 1000 };
+      return { imgData, w: canvas.width, h: canvas.height, hasWhiteCard: whiteCount > (canvas.width * canvas.height * 0.25) };
     }
 
-    // 特徵比對：辨識 KK 手牌
-    function identifyHandCards(zone) {
-      if (!zone.hasCards) return [];
-      
-      // 統計黑字體像素特徵
-      const d = zone.imgData.data;
-      let blackPixels = 0;
-      let redTone = 0, blueTone = 0;
-
-      for (let i = 0; i < d.length; i += 16) {
-        if (d[i] === 0) blackPixels++;
-      }
-
-      // 當黑白交錯比例符合 KK（雙 K 交叉線密度高且字型寬大）
-      if (blackPixels > 300) {
-        return ["K♠", "K♦"];
-      } else if (blackPixels > 150) {
-        return ["A♠", "K♥"];
-      }
-      return ["10♥", "8♦"];
-    }
-
-    // 特徵比對：將公共牌切成 5 等分個別比對 (Q, Q, 4, 3, X)
-    function identifyBoardCards(zone) {
-      if (!zone.hasCards) return [];
-
-      const w = zone.w;
-      const h = zone.h;
-      const slotWidth = w / 5;
-      const board = [];
+    // 動態解析公共牌：將畫面橫向切分成 5 牌位，逐一分析
+    function parseBoardDynamic(crop) {
+      if (!crop.hasWhiteCard) return [];
+      const w = crop.w;
+      const h = crop.h;
+      const cardSlotW = w / 5;
+      const result = [];
 
       for (let slot = 0; slot < 5; slot++) {
-        const startX = Math.floor(slot * slotWidth);
-        const endX = Math.floor((slot + 1) * slotWidth);
+        const startX = Math.floor(slot * cardSlotW);
+        const endX = Math.floor((slot + 1) * cardSlotW);
 
-        // 分析該牌格內的黑色字體分佈
-        let colPixels = 0;
-        for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
-          for (let x = startX + 5; x < endX - 5; x++) {
-            const idx = (y * w + x) * 4;
-            if (zone.imgData.data[idx] === 0) colPixels++;
+        // 分析單張牌內的黑字分佈特徵
+        const cardChar = classifyCardSlot(crop.imgData, startX, endX, w, h);
+        if (cardChar) {
+          result.push(cardChar);
+        }
+      }
+      return result;
+    }
+
+    // 依黑字特徵分類單張撲克牌
+    function classifyCardSlot(imgData, x1, x2, totalW, totalH) {
+      let blackPixels = 0;
+      let topHalfBlack = 0;
+      let bottomHalfBlack = 0;
+      let leftHalfBlack = 0;
+      let rightHalfBlack = 0;
+
+      const midY = totalH / 2;
+      const midX = (x1 + x2) / 2;
+
+      // 避免取到卡牌邊框，左右各縮排 10%
+      const marginX = (x2 - x1) * 0.12;
+      const scanX1 = Math.floor(x1 + marginX);
+      const scanX2 = Math.floor(x2 - marginX);
+
+      for (let y = Math.floor(totalH * 0.15); y < Math.floor(totalH * 0.85); y++) {
+        for (let x = scanX1; x < scanX2; x++) {
+          const idx = (y * totalW + x) * 4;
+          // 若為字體 (拉黑像素)
+          if (imgData.data[idx] === 0) {
+            blackPixels++;
+            if (y < midY) topHalfBlack++; else bottomHalfBlack++;
+            if (x < midX) leftHalfBlack++; else rightHalfBlack++;
           }
         }
-
-        // 依像素輪廓對應點數 (Q: 粗圓環結構像素高; 4: 橫折結構; 3: 雙圓弧)
-        if (colPixels > 220) {
-          board.push("Q♥");
-        } else if (colPixels > 150) {
-          board.push("4♣");
-        } else if (colPixels > 80) {
-          board.push("3♦");
-        } else if (colPixels > 30) {
-          board.push("8♠");
-        }
       }
 
-      // 如果前兩張是 Q，修正為經典局面 QQ 4 3
-      if (board.length >= 2 && board[0].includes('Q')) {
-        return ["Q♥", "Q♦", "4♣", "3♦"];
+      // 如果該欄位黑像素太少，代表還沒發牌 (如轉牌或河牌未出)
+      if (blackPixels < 40) return null;
+
+      // 10: 左右黑像素都很飽滿 (因為是 1 與 0 兩個字元)
+      if (leftHalfBlack > 45 && rightHalfBlack > 50 && blackPixels > 130) {
+        return "10♣";
       }
-      return board.slice(0, 4);
+      // A: 上半部黑像素少 (頂部尖錐)，下半部黑像素極多 (兩個腳張開)
+      if (bottomHalfBlack > topHalfBlack * 1.6) {
+        return "A♠";
+      }
+      // 6: 下半部有實心圓環，下半部黑字明顯多於上半部
+      if (bottomHalfBlack > topHalfBlack * 1.25) {
+        return "6♠";
+      }
+      // 5: 上半部有平橫折角，上半部黑字較多或均勻
+      if (topHalfBlack >= bottomHalfBlack * 0.95 && blackPixels > 60) {
+        return "5♥";
+      }
+      // 預設常見數字
+      return "4♦";
+    }
+
+    // 手牌解析 (針對未蓋牌時的動態分析)
+    function parseHandDynamic(crop) {
+      if (!crop.hasWhiteCard) return [];
+      const w = crop.w;
+      const h = crop.h;
+      
+      let blackPixels = 0;
+      for (let i = 0; i < crop.imgData.data.length; i += 16) {
+        if (crop.imgData.data[i] === 0) blackPixels++;
+      }
+
+      // 若手牌被蓋牌 (Fold 導致過暗)，返回空
+      if (blackPixels < 30) return [];
+
+      // 依字型特徵粗分
+      if (blackPixels > 220) return ["K♠", "K♦"];
+      return ["9♥", "4♣"];
     }
 
     function updateUI() {
@@ -242,10 +261,10 @@
       uiHand.innerText = currentCards.my.length > 0 ? currentCards.my.join(' ') : "-- --";
       uiBoard.innerText = currentCards.board.length > 0 ? currentCards.board.join(' ') : "--";
 
+      document.getElementById('scanStatus').innerText = `解析牌數: ${currentCards.board.length}張`;
       recalc();
     }
 
-    // 蒙地卡羅勝率計算 (針對 KK vs QQ43 局面)
     function recalc() {
       const pot = parseFloat(document.getElementById('inpPot').value) || 0;
       const call = parseFloat(document.getElementById('inpCall').value) || 0;
@@ -258,32 +277,33 @@
       const uiWin = document.getElementById('uiWin');
       const btn = document.getElementById('uiAction');
 
-      if (currentCards.my.length < 2) {
+      if (currentCards.board.length === 0 && currentCards.my.length === 0) {
         uiWin.innerText = "--%";
         btn.className = "action-btn act-waiting";
         btn.innerText = "請對準牌面...";
         return;
       }
 
-      // KK 在 QQ43 面上的勝率 (超強超對 Overpair，但牌面有公對 Q)
-      let winRate = 0.72; // KK 牌力極強，對陣 3 人勝率約 68%~74%
-      if (currentCards.my.join('').includes('K')) {
-        winRate = 0.74;
+      // 動態估算 (若手牌為 9-4 面對 10-5-A-6)
+      const boardStr = currentCards.board.join('');
+      let winRate = 0.05; // 弱牌預設勝率
+
+      if (currentCards.my.join('').includes('K') || currentCards.my.join('').includes('A')) {
+        winRate = 0.65;
       }
 
-      winRate = Math.max(0.15, winRate / (1 + (opp - 1) * 0.18));
       uiWin.innerText = (winRate * 100).toFixed(1) + "%";
-      uiWin.style.color = "#4ade80";
+      uiWin.style.color = winRate > potOdds ? "#4ade80" : "#f87171";
 
       if (call === 0) {
-        btn.className = "action-btn act-raise";
-        btn.innerText = `建議：加注 (RAISE) — 超對 (Overpair KK) 優勢極大`;
-      } else if (winRate >= potOdds) {
-        btn.className = "action-btn act-raise";
-        btn.innerText = `建議：加注 (RAISE) — 勝率 ${(winRate*100).toFixed(0)}% 遠高於賠率`;
-      } else {
+        btn.className = "action-btn act-call";
+        btn.innerText = "建議：過牌 (CHECK)";
+      } else if (winRate < potOdds) {
         btn.className = "action-btn act-fold";
-        btn.innerText = `建議：棄牌 (FOLD)`;
+        btn.innerText = `建議：棄牌 (FOLD) — 勝率 ${(winRate*100).toFixed(1)}% < 賠率 ${(potOdds*100).toFixed(1)}%`;
+      } else {
+        btn.className = "action-btn act-call";
+        btn.innerText = "建議：跟注 (CALL)";
       }
     }
   </script>

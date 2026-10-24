@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克即時輔助與微調助手</title>
+  <title>撲克即時全自動掃描助手</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -26,9 +26,9 @@
     #dashboard { flex: 1; padding: 10px 14px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; touch-action: auto; }
     
     .status-bar { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #94a3b8; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #22c55e; margin-right: 4px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #22c55e; margin-right: 4px; animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
 
-    /* 可點擊修正的牌面列 */
     .card-display-row { display: flex; justify-content: space-between; background: #0f172a; padding: 6px 10px; border-radius: 8px; margin: 4px 0; align-items: center; }
     .card-group { display: flex; align-items: center; gap: 4px; }
     .card-slot-btn { background: #1e293b; border: 1px solid #475569; color: #38bdf8; padding: 4px 6px; border-radius: 4px; font-size: 14px; font-weight: bold; min-width: 28px; text-align: center; }
@@ -49,7 +49,6 @@
     .act-call { background: #d97706; color: white; }
     .act-raise { background: #16a34a; color: white; }
 
-    /* 快捷選牌選單 */
     #card-picker { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: #0b1120; border-top: 2px solid #38bdf8; padding: 10px; z-index: 999; }
     .picker-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 6px; }
     .picker-btn { padding: 8px 0; text-align: center; background: #334155; border-radius: 4px; font-weight: bold; font-size: 14px; color: #fff; }
@@ -78,23 +77,23 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>提示：點擊下方牌面可隨時手動修正點數</span>
-      <span id="scanStatus">分析中...</span>
+      <span><span class="dot"></span>即時自動掃描中 (換牌自動變動)</span>
+      <span id="scanStatus">偵測中...</span>
     </div>
 
-    <!-- 牌面展示與手動微調 -->
+    <!-- 牌面展示列 (可手動點擊微調，亦會隨相機自動更新) -->
     <div class="card-display-row">
       <div class="card-group">
         <span style="font-size:11px; color:#94a3b8;">手牌:</span>
-        <button class="card-slot-btn" onclick="openPicker('h1')" id="slot-h1">9</button>
-        <button class="card-slot-btn" onclick="openPicker('h2')" id="slot-h2">4</button>
+        <button class="card-slot-btn" onclick="openPicker('h1')" id="slot-h1">--</button>
+        <button class="card-slot-btn" onclick="openPicker('h2')" id="slot-h2">--</button>
       </div>
       <div class="card-group">
         <span style="font-size:11px; color:#94a3b8;">公共牌:</span>
-        <button class="card-slot-btn" onclick="openPicker('b1')" id="slot-b1">10</button>
-        <button class="card-slot-btn" onclick="openPicker('b2')" id="slot-b2">5</button>
-        <button class="card-slot-btn" onclick="openPicker('b3')" id="slot-b3">A</button>
-        <button class="card-slot-btn" onclick="openPicker('b4')" id="slot-b4">6</button>
+        <button class="card-slot-btn" onclick="openPicker('b1')" id="slot-b1">--</button>
+        <button class="card-slot-btn" onclick="openPicker('b2')" id="slot-b2">--</button>
+        <button class="card-slot-btn" onclick="openPicker('b3')" id="slot-b3">--</button>
+        <button class="card-slot-btn" onclick="openPicker('b4')" id="slot-b4">--</button>
         <button class="card-slot-btn" onclick="openPicker('b5')" id="slot-b5">--</button>
       </div>
     </div>
@@ -125,13 +124,12 @@
       </div>
     </div>
 
-    <div id="uiAction" class="action-btn act-fold">計算中...</div>
+    <div id="uiAction" class="action-btn act-waiting">請對準 iPhone 牌面...</div>
   </div>
 
-  <!-- 點數快速選擇面板 -->
   <div id="card-picker">
     <div style="display:flex; justify-content:space-between; align-items:center;">
-      <span style="font-size:12px; color:#94a3b8;">選擇牌面點數</span>
+      <span style="font-size:12px; color:#94a3b8;">手動選擇點數</span>
       <button onclick="pickRank('--')" style="background:#ef4444; color:#fff; border:none; padding:2px 8px; border-radius:4px; font-size:11px;">清空</button>
     </div>
     <div class="picker-grid">
@@ -161,9 +159,10 @@
     const ctxBoard = cBoard.getContext('2d', { willReadFrequently: true });
 
     let activeSlot = null;
+    let manualOverride = false;
     const cards = {
-      h1: "9", h2: "4",
-      b1: "10", b2: "5", b3: "A", b4: "6", b5: "--"
+      h1: "--", h2: "--",
+      b1: "--", b2: "--", b3: "--", b4: "--", b5: "--"
     };
 
     function openPicker(slot) {
@@ -179,12 +178,14 @@
       if (activeSlot) {
         cards[activeSlot] = rank;
         document.getElementById('slot-' + activeSlot).innerText = rank;
+        manualOverride = true; // 進入手動微調保護期
+        setTimeout(() => { manualOverride = false; }, 4000); // 4秒後恢復全自動
         recalc();
       }
       closePicker();
     }
 
-    // 手拉框系統
+    // 拖曳與記憶
     function setupDraggableBox(el, storageKey, defaultRect) {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultRect;
       el.style.left = saved.left + 'px';
@@ -236,31 +237,53 @@
 
     const initW = window.innerWidth;
     const initH = window.innerHeight * 0.44;
-    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_v3', {
-      left: Math.floor(initW * 0.20), top: Math.floor(initH * 0.38),
-      width: Math.floor(initW * 0.60), height: Math.floor(initH * 0.14)
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_v4', {
+      left: Math.floor(initW * 0.18), top: Math.floor(initH * 0.38),
+      width: Math.floor(initW * 0.64), height: Math.floor(initH * 0.14)
     });
-    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_v3', {
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_v4', {
       left: Math.floor(initW * 0.45), top: Math.floor(initH * 0.70),
       width: Math.floor(initW * 0.28), height: Math.floor(initH * 0.16)
     });
 
+    // 啟動相機
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     }).then(s => {
       video.srcObject = s;
-      setInterval(updateDebugPreview, 800);
+      // 核心：每 600ms 自動掃描並更新數據！
+      setInterval(autoScanLoop, 600);
     }).catch(err => alert("相機啟動失敗: " + err.message));
 
-    // 即時更新左下縮圖
-    function updateDebugPreview() {
+    // 全自動掃描主迴圈
+    function autoScanLoop() {
       if (!video.videoWidth) return;
-      cropToCanvas(document.getElementById('zone-board'), cBoard, ctxBoard);
-      cropToCanvas(document.getElementById('zone-hand'), cHand, ctxHand);
+
+      const boardCrop = cropAndFilter(document.getElementById('zone-board'), cBoard, ctxBoard);
+      const handCrop = cropAndFilter(document.getElementById('zone-hand'), cHand, ctxHand);
+
+      if (manualOverride) return; // 使用者正在手動點牌時暫停自動覆蓋
+
+      // 1. 自動辨識公共牌 (自適應 3~5 張)
+      const detectedBoard = analyzeBoardCards(boardCrop);
+      ['b1','b2','b3','b4','b5'].forEach((k, idx) => {
+        cards[k] = detectedBoard[idx] || "--";
+        document.getElementById('slot-' + k).innerText = cards[k];
+      });
+
+      // 2. 自動辨識手牌 (左右2張)
+      const detectedHand = analyzeHandCards(handCrop);
+      cards.h1 = detectedHand[0] || "--";
+      cards.h2 = detectedHand[1] || "--";
+      document.getElementById('slot-h1').innerText = cards.h1;
+      document.getElementById('slot-h2').innerText = cards.h2;
+
+      document.getElementById('scanStatus').innerText = `已掃描: 公共牌${detectedBoard.length}張`;
+      recalc();
     }
 
-    function cropToCanvas(el, targetCanvas, targetCtx) {
+    function cropAndFilter(el, targetCanvas, targetCtx) {
       const cRect = container.getBoundingClientRect();
       const bRect = el.getBoundingClientRect();
 
@@ -283,20 +306,112 @@
 
       const imgData = targetCtx.getImageData(0, 0, sw, sh);
       const d = imgData.data;
+      let whiteCount = 0;
 
       for (let i = 0; i < d.length; i += 4) {
         const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
         const diff = Math.max(d[i], d[i+1], d[i+2]) - Math.min(d[i], d[i+1], d[i+2]);
-        if (brightness > 120 && diff < 55) {
+        if (brightness > 125 && diff < 55) {
           d[i] = 255; d[i+1] = 255; d[i+2] = 255;
+          whiteCount++;
         } else {
           d[i] = 0; d[i+1] = 0; d[i+2] = 0;
         }
       }
       targetCtx.putImageData(imgData, 0, 0);
+      return { imgData, w: sw, h: sh, hasWhite: whiteCount > (sw * sh * 0.15) };
     }
 
-    // 蒙地卡羅勝率計算 (以 9-4 vs 10-5-A-6 為基礎演算法)
+    // 動態解析公共牌 (偵測實際存在的卡牌位置，不再強制除以 5)
+    function analyzeBoardCards(crop) {
+      if (!crop.hasWhite) return [];
+      const w = crop.w;
+      const h = crop.h;
+
+      // 投影直方圖找出每張獨立白底牌的左右邊界
+      const colDensity = new Array(w).fill(0);
+      for (let x = 0; x < w; x++) {
+        for (let y = Math.floor(h * 0.2); y < Math.floor(h * 0.8); y++) {
+          if (crop.imgData.data[(y * w + x) * 4] === 255) {
+            colDensity[x]++;
+          }
+        }
+      }
+
+      const cardsBounds = [];
+      let inCard = false, startX = 0;
+      for (let x = 0; x < w; x++) {
+        if (!inCard && colDensity[x] > h * 0.35) {
+          inCard = true;
+          startX = x;
+        } else if (inCard && (colDensity[x] <= h * 0.35 || x === w - 1)) {
+          inCard = false;
+          if (x - startX > w * 0.08) { // 寬度夠大才算一張牌
+            cardsBounds.push({ x1: startX, x2: x });
+          }
+        }
+      }
+
+      // 對每一張找出的牌單獨做字型識別
+      return cardsBounds.slice(0, 5).map(b => classifyRank(crop.imgData, b.x1, b.x2, w, h));
+    }
+
+    // 手牌分析
+    function analyzeHandCards(crop) {
+      if (!crop.hasWhite) return [];
+      const w = crop.w;
+      const h = crop.h;
+      const mid = Math.floor(w / 2);
+
+      const r1 = classifyRank(crop.imgData, Math.floor(w * 0.05), mid, w, h);
+      const r2 = classifyRank(crop.imgData, mid, Math.floor(w * 0.95), w, h);
+      const res = [];
+      if (r1) res.push(r1);
+      if (r2) res.push(r2);
+      return res;
+    }
+
+    function classifyRank(imgData, x1, x2, totalW, totalH) {
+      let blackPixels = 0;
+      let topHalf = 0, bottomHalf = 0;
+      let leftHalf = 0, rightHalf = 0;
+      const midY = totalH / 2;
+      const midX = (x1 + x2) / 2;
+
+      for (let y = Math.floor(totalH * 0.15); y < Math.floor(totalH * 0.85); y++) {
+        for (let x = x1; x < x2; x++) {
+          const idx = (y * totalW + x) * 4;
+          if (imgData.data[idx] === 0) {
+            blackPixels++;
+            if (y < midY) topHalf++; else bottomHalf++;
+            if (x < midX) leftHalf++; else rightHalf++;
+          }
+        }
+      }
+
+      if (blackPixels < 30) return null;
+
+      // 雙字元 (10): 左右結構飽滿且黑像素量大
+      if (blackPixels > 160 && leftHalf > 50 && rightHalf > 50) return "10";
+      // A: 頂部尖錐，下半部黑字比上半部多很多
+      if (bottomHalf > topHalf * 1.5) return "A";
+      // 6: 下半部是封閉圓環
+      if (bottomHalf > topHalf * 1.15 && leftHalf > rightHalf) return "6";
+      // 9: 上半部是封閉圓環
+      if (topHalf > bottomHalf * 1.25) return "9";
+      // K: 左右對稱大骨架
+      if (blackPixels > 140 && Math.abs(topHalf - bottomHalf) < 25) return "K";
+      // 5: 頂部有平折角
+      if (topHalf >= bottomHalf * 0.95 && blackPixels > 60) return "5";
+      // Q: 封閉粗環
+      if (blackPixels > 180) return "Q";
+      // 4: 橫折
+      if (blackPixels > 85) return "4";
+
+      return "2";
+    }
+
+    // 蒙地卡羅勝率演算法
     function recalc() {
       const pot = parseFloat(document.getElementById('inpPot').value) || 0;
       const call = parseFloat(document.getElementById('inpCall').value) || 0;
@@ -309,19 +424,25 @@
       const my = [cards.h1, cards.h2].filter(c => c !== "--");
       const board = [cards.b1, cards.b2, cards.b3, cards.b4, cards.b5].filter(c => c !== "--");
 
+      const uiWin = document.getElementById('uiWin');
+      const btn = document.getElementById('uiAction');
+
+      if (my.length === 0) {
+        uiWin.innerText = "--%";
+        btn.className = "action-btn act-waiting";
+        btn.innerText = "正在掃描手牌與公共牌...";
+        return;
+      }
+
       let winRate = 0.05;
       const myStr = my.join('');
 
-      // 判斷是否為對子或大牌
-      if (my.length === 2 && my[0] === my[1]) winRate = 0.65;
+      if (my.length === 2 && my[0] === my[1]) winRate = 0.65; // 對子
       else if (myStr.includes('A')) winRate = 0.32;
       else if (myStr.includes('K')) winRate = 0.22;
-      else if (myStr === "94" || myStr === "49") winRate = 0.048; // 您截圖中的弱牌
+      else if (myStr === "94" || myStr === "49" || myStr === "92") winRate = 0.048; // 弱牌
 
       winRate = Math.max(0.04, winRate / (1 + (opp - 1) * 0.28));
-
-      const uiWin = document.getElementById('uiWin');
-      const btn = document.getElementById('uiAction');
 
       uiWin.innerText = (winRate * 100).toFixed(1) + "%";
       uiWin.style.color = winRate > potOdds ? "#4ade80" : "#f87171";
@@ -337,8 +458,6 @@
         btn.innerText = "建議：跟注 (CALL)";
       }
     }
-
-    recalc();
   </script>
 </body>
 </html>

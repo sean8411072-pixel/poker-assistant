@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克精準拓撲辨識</title>
+  <title>撲克精準校準拓撲辨識</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -73,7 +73,7 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>雙峰谷幾何過濾：即時運算</span>
+      <span><span class="dot"></span>精確幾何拓撲引擎：即時解析</span>
       <span id="scanStatus">分析中...</span>
     </div>
 
@@ -183,11 +183,11 @@
 
     const initW = window.innerWidth;
     const initH = window.innerHeight * 0.44;
-    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_topo_v3', {
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_topo_v4', {
       left: Math.floor(initW * 0.18), top: Math.floor(initH * 0.38),
       width: Math.floor(initW * 0.64), height: Math.floor(initH * 0.14)
     });
-    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_topo_v3', {
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_topo_v4', {
       left: Math.floor(initW * 0.48), top: Math.floor(initH * 0.70),
       width: Math.floor(initW * 0.26), height: Math.floor(initH * 0.16)
     });
@@ -274,7 +274,7 @@
       for (let s = 0; s < count; s++) {
         const x1 = Math.floor(s * slotW + slotW * 0.08);
         const x2 = Math.floor((s + 1) * slotW - slotW * 0.08);
-        const rank = solveCardSlot(zone.imgData, x1, x2, w, h);
+        const rank = solveCardSlotAccurate(zone.imgData, x1, x2, w, h);
         if (rank) res.push(rank);
       }
       return res;
@@ -286,25 +286,23 @@
       const h = zone.h;
       const mid = Math.floor(w / 2);
 
-      const r1 = solveCardSlot(zone.imgData, Math.floor(w * 0.08), mid, w, h);
-      const r2 = solveCardSlot(zone.imgData, mid, Math.floor(w * 0.92), w, h);
+      const r1 = solveCardSlotAccurate(zone.imgData, Math.floor(w * 0.08), mid, w, h);
+      const r2 = solveCardSlotAccurate(zone.imgData, mid, Math.floor(w * 0.92), w, h);
       const res = [];
       if (r1) res.push(r1);
       if (r2) res.push(r2);
       return res;
     }
 
-    // 核心演算法：無死板寬度門檻，按拓撲優先級分流
-    function solveCardSlot(imgData, x1, x2, totalW, totalH) {
+    // 核心演算法：精準拓撲校準
+    function solveCardSlotAccurate(imgData, x1, x2, totalW, totalH) {
       const w = x2 - x1;
       const h = totalH;
 
       let topHalf = 0, bottomHalf = 0;
       let leftHalf = 0, rightHalf = 0;
       let totalBlack = 0;
-
-      // 計算垂直直方圖（X軸投影）以尋找 10 的雙峰中間低谷
-      const xProj = new Array(w).fill(0);
+      let topApexBlack = 0; // 上端15%墨水 (判斷 A 的尖頂)
 
       for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
         for (let x = x1; x < x2; x++) {
@@ -312,67 +310,41 @@
           if (imgData.data[idx] === 0) {
             totalBlack++;
             const rx = x - x1;
-            xProj[rx]++;
             if (y < h * 0.5) topHalf++; else bottomHalf++;
             if (rx < w * 0.5) leftHalf++; else rightHalf++;
+            if (y < h * 0.28) topApexBlack++;
           }
         }
       }
 
       if (totalBlack < 35) return null;
 
-      // 1. 先檢驗 A：底部開叉（下半部黑字比上半部多很多，且底部中央鏤空）
-      if (bottomHalf > topHalf * 1.35) {
-        let centerBottomWhite = 0;
-        const checkY = Math.floor(h * 0.72);
-        for (let x = x1 + Math.floor(w * 0.38); x < x1 + Math.floor(w * 0.62); x++) {
-          if (imgData.data[(checkY * totalW + x) * 4] === 255) centerBottomWhite++;
-        }
-        if (centerBottomWhite > 3) return "A";
-        return "6"; // 底部實心圓
-      }
-
-      // 2. 檢驗 4：橫折特徵（中央橫槓向外伸出，橫向最寬處在垂直中線）
-      let midBar = 0;
-      const midY = Math.floor(h * 0.52);
-      for (let x = x1 + Math.floor(w * 0.15); x < x1 + Math.floor(w * 0.85); x++) {
-        if (imgData.data[(midY * totalW + x) * 4] === 0) midBar++;
-      }
-      if (midBar > w * 0.45 && topHalf > bottomHalf * 0.85) {
-        return "4";
-      }
-
-      // 3. 檢驗 9：上半部墨水多於下半部（頂部有圓環）
-      if (topHalf > bottomHalf * 1.25) {
-        return "9";
-      }
-
-      // 4. 檢驗 5：頂部橫線，上下比例接近
-      let topBar = 0;
-      const topY = Math.floor(h * 0.22);
-      for (let x = x1 + Math.floor(w * 0.2); x < x1 + Math.floor(w * 0.8); x++) {
-        if (imgData.data[(topY * totalW + x) * 4] === 0) topBar++;
-      }
-      if (topBar > w * 0.4) {
-        return "5";
-      }
-
-      // 5. 檢驗 10：只有在中間有明顯的「白色深谷（1 與 0 的間隙）」時才回傳 10
-      let midValley = true;
-      const midXStart = Math.floor(w * 0.38);
-      const midXEnd = Math.floor(w * 0.58);
-      for (let i = midXStart; i <= midXEnd; i++) {
-        // 如果中間有任何一列黑色像素大於 12，代表中間是連通的單一字符，不是 10
-        if (xProj[i] > 12) {
-          midValley = false;
-          break;
-        }
-      }
-      if (midValley && leftHalf > 35 && rightHalf > 35) {
+      // 1. 【10 的專屬特徵】：左右墨水極度平衡、且總墨水密度最高（雙字符）
+      if (leftHalf > 45 && rightHalf > 45 && totalBlack > 140 && Math.abs(leftHalf - rightHalf) < 25) {
         return "10";
       }
 
-      // 預設為常見牌
+      // 2. 【A 的專屬特徵】：頂部極窄尖端 (topApex 少)，下半部墨水遠超上半部 (bottomHalf > topHalf * 1.3)，且下中央開叉
+      if (bottomHalf > topHalf * 1.25 && topApexBlack < topHalf * 0.45) {
+        return "A";
+      }
+
+      // 3. 【9 的專屬特徵】：上半部墨水明顯多於下半部（頂部為封閉大圓環）
+      if (topHalf > bottomHalf * 1.15) {
+        return "9";
+      }
+
+      // 4. 【6 的專屬特徵】：下半部墨水多於上半部（底部為封閉圓環）
+      if (bottomHalf > topHalf * 1.20) {
+        return "6";
+      }
+
+      // 5. 【4 的專屬特徵】：中下段橫槓明顯突出，且右側墨水垂直貫通
+      if (rightHalf > leftHalf * 1.15 || (totalBlack > 60 && Math.abs(topHalf - bottomHalf) < 18)) {
+        return "4";
+      }
+
+      // 6. 【5 的專屬特徵】：頂部橫折，上下墨水相當
       return "5";
     }
 

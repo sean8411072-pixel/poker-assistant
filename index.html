@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克色相幾何融合辨識</title>
+  <title>撲克純幾何輪廓辨識</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -73,7 +73,7 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>色彩色相 + 幾何特徵引擎：即時運算</span>
+      <span><span class="dot"></span>幾何輪廓引擎：即時運算</span>
       <span id="scanStatus">分析中...</span>
     </div>
 
@@ -183,11 +183,11 @@
 
     const initW = window.innerWidth;
     const initH = window.innerHeight * 0.44;
-    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_color', {
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_geo_v2', {
       left: Math.floor(initW * 0.18), top: Math.floor(initH * 0.38),
       width: Math.floor(initW * 0.64), height: Math.floor(initH * 0.14)
     });
-    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_color', {
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_geo_v2', {
       left: Math.floor(initW * 0.48), top: Math.floor(initH * 0.70),
       width: Math.floor(initW * 0.26), height: Math.floor(initH * 0.16)
     });
@@ -200,7 +200,6 @@
       setInterval(runScanLoop, 500);
     }).catch(err => alert("相機啟動失敗: " + err.message));
 
-    // 同時保留原彩與二值化圖層
     function captureZone(el, targetCanvas, targetCtx) {
       const cRect = container.getBoundingClientRect();
       const bRect = el.getBoundingClientRect();
@@ -223,24 +222,22 @@
       targetCanvas.height = sh;
       targetCtx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
 
-      const rawData = targetCtx.getImageData(0, 0, sw, sh);
-      const binData = targetCtx.createImageData(sw, sh);
-      const rD = rawData.data;
-      const bD = binData.data;
+      const imgData = targetCtx.getImageData(0, 0, sw, sh);
+      const d = imgData.data;
       let whiteCount = 0;
 
-      for (let i = 0; i < rD.length; i += 4) {
-        const brightness = (rD[i] + rD[i+1] + rD[i+2]) / 3;
-        const diff = Math.max(rD[i], rD[i+1], rD[i+2]) - Math.min(rD[i], rD[i+1], rD[i+2]);
-        if (brightness > 120 && diff < 60) {
-          bD[i] = 255; bD[i+1] = 255; bD[i+2] = 255; bD[i+3] = 255;
+      for (let i = 0; i < d.length; i += 4) {
+        const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
+        const diff = Math.max(d[i], d[i+1], d[i+2]) - Math.min(d[i], d[i+1], d[i+2]);
+        if (brightness > 120 && diff < 65) {
+          d[i] = 255; d[i+1] = 255; d[i+2] = 255;
           whiteCount++;
         } else {
-          bD[i] = 0; bD[i+1] = 0; bD[i+2] = 0; bD[i+3] = 255;
+          d[i] = 0; d[i+1] = 0; d[i+2] = 0;
         }
       }
-      targetCtx.putImageData(binData, 0, 0);
-      return { rawData, binData, w: sw, h: sh, hasWhite: whiteCount > (sw * sh * 0.12) };
+      targetCtx.putImageData(imgData, 0, 0);
+      return { imgData, w: sw, h: sh, hasWhite: whiteCount > (sw * sh * 0.12) };
     }
 
     function runScanLoop() {
@@ -277,7 +274,7 @@
       for (let s = 0; s < count; s++) {
         const x1 = Math.floor(s * slotW + slotW * 0.08);
         const x2 = Math.floor((s + 1) * slotW - slotW * 0.08);
-        const rank = solveCardHybrid(zone, x1, x2, w, h);
+        const rank = solveCardPureGeometry(zone.imgData, x1, x2, w, h);
         if (rank) res.push(rank);
       }
       return res;
@@ -289,22 +286,18 @@
       const h = zone.h;
       const mid = Math.floor(w / 2);
 
-      const r1 = solveCardHybrid(zone, Math.floor(w * 0.08), mid, w, h);
-      const r2 = solveCardHybrid(zone, mid, Math.floor(w * 0.92), w, h);
+      const r1 = solveCardPureGeometry(zone.imgData, Math.floor(w * 0.08), mid, w, h);
+      const r2 = solveCardPureGeometry(zone.imgData, mid, Math.floor(w * 0.92), w, h);
       const res = [];
       if (r1) res.push(r1);
       if (r2) res.push(r2);
       return res;
     }
 
-    // 核心演算法：色彩先驗過濾 + 幾何骨架嚴格區分
-    function solveCardHybrid(zone, x1, x2, totalW, totalH) {
-      const raw = zone.rawData.data;
-      const bin = zone.binData.data;
+    // 核心演算法：純幾何拓撲特徵判定（不依賴色相）
+    function solveCardPureGeometry(imgData, x1, x2, totalW, totalH) {
       const w = x2 - x1;
       const h = totalH;
-
-      let rSum = 0, gSum = 0, bSum = 0, inkCount = 0;
       let blackTotal = 0;
       let topHalf = 0, bottomHalf = 0;
       let leftHalf = 0, rightHalf = 0;
@@ -316,61 +309,50 @@
       for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
         for (let x = x1; x < x2; x++) {
           const idx = (y * totalW + x) * 4;
-          // 若為字體像素
-          if (bin[idx] === 0) {
+          if (imgData.data[idx] === 0) {
             blackTotal++;
             if (y < midY) topHalf++; else bottomHalf++;
             if (x < midX) leftHalf++; else rightHalf++;
             if (y > h * 0.65 && Math.abs(x - midX) < w * 0.12) {
               bottomCenter++;
             }
-            // 採集原彩色彩
-            rSum += raw[idx];
-            gSum += raw[idx+1];
-            bSum += raw[idx+2];
-            inkCount++;
           }
         }
       }
 
       if (blackTotal < 25) return null;
 
-      // 色彩色相判定
-      let isGreen = false, isRed = false, isBlue = false;
-      if (inkCount > 10) {
-        const avgR = rSum / inkCount;
-        const avgG = gSum / inkCount;
-        const avgB = bSum / inkCount;
-        if (avgG > avgR * 1.15 && avgG > avgB * 1.10) isGreen = true; // 梅花綠
-        else if (avgR > avgG * 1.25 && avgR > avgB * 1.25) isRed = true; // 紅心/方塊紅
-        else if (avgB > avgR * 1.15) isBlue = true; // 黑桃藍
-      }
-
-      // 1. 綠色優先判定為 10 (X-Poker 綠色是梅花 10)
-      if (isGreen || (w > h * 0.72 && leftHalf > 55 && rightHalf > 55)) {
+      // 1. 10: 雙字符，左右平衡且墨水面積大
+      if (leftHalf > 55 && rightHalf > 55 && blackTotal > 140) {
         return "10";
       }
 
-      // 2. 紅色優先判定為 5 (或紅心手牌 9)
-      if (isRed) {
-        if (topHalf > bottomHalf * 1.15) return "9"; // 上半部有圓圈
-        return "5"; // 頂部橫折
-      }
-
-      // 3. 藍色優先判定為 A (或尖錐底部開叉)
-      if (isBlue || (bottomHalf > topHalf * 1.35 && bottomCenter < bottomHalf * 0.15)) {
+      // 2. A: 頂部窄、底部寬、下中央為白色鏤空（開叉特徵）
+      if (bottomHalf > topHalf * 1.40 && bottomCenter < bottomHalf * 0.12) {
         return "A";
       }
 
-      // 4. 黑色系或深色系：6 vs 4
+      // 3. 6: 下半部閉合圓，下半部墨水明顯多於上半部
       if (bottomHalf > topHalf * 1.25) {
-        return "6"; // 下半部實心圓環
+        return "6";
       }
-      if (topHalf > bottomHalf * 1.20) {
+
+      // 4. 9: 上半部閉合圓，上半部墨水明顯多於下半部
+      if (topHalf > bottomHalf * 1.25) {
         return "9";
       }
 
-      return "4";
+      // 5. 5: 頂部水平橫折，上半部墨水均勻或偏多
+      if (topHalf >= bottomHalf * 0.95 && blackTotal > 55) {
+        return "5";
+      }
+
+      // 6. 4: 橫折骨架
+      if (blackTotal > 45) {
+        return "4";
+      }
+
+      return "3";
     }
 
     function recalc() {
@@ -389,14 +371,14 @@
       if (my.length === 0) {
         uiWin.innerText = "--%";
         btn.className = "action-btn act-waiting";
-        btn.innerText = "正在分析骨架與顏色...";
+        btn.innerText = "正在分析牌面輪廓...";
         return;
       }
 
       let winRate = 0.05;
       const myStr = my.join('');
 
-      if (myStr === "94" || myStr === "49") winRate = 0.048; // 9-4 弱牌
+      if (myStr === "94" || myStr === "49") winRate = 0.048;
       else if (myStr === "AA") winRate = 0.83;
       else if (my.length === 2 && my[0] === my[1]) winRate = 0.68;
       else if (myStr.includes('A')) winRate = 0.32;

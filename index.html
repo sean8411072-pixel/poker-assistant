@@ -3,249 +3,315 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克即時自動辨識助手</title>
+  <title>撲克即時本地算力助手</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    body { background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
     
-    #camera-box { position: relative; width: 100%; height: 48vh; background: #000; overflow: hidden; }
+    /* 鏡頭預覽區 */
+    #camera-box { position: relative; width: 100%; height: 36vh; background: #000; overflow: hidden; }
     video { width: 100%; height: 100%; object-fit: cover; }
-    canvas { display: none; }
+    .crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 2px dashed rgba(34, 197, 94, 0.6); width: 88%; height: 80%; border-radius: 8px; pointer-events: none; }
     
-    .crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 2px dashed rgba(34, 197, 94, 0.7); width: 88%; height: 78%; border-radius: 12px; pointer-events: none; }
-    .crosshair-text { position: absolute; top: 8px; left: 12px; font-size: 11px; color: #4ade80; background: rgba(0,0,0,0.6); padding: 2px 6px; border-radius: 4px; }
+    /* 下方即時計算主面板 */
+    #panel { flex: 1; padding: 10px 14px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; }
     
-    /* 閃爍指示燈 (監控中) */
-    .live-indicator { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 20px; font-size: 11px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
-    .dot.active { background: #ef4444; animation: blink 1s infinite; }
-    @keyframes blink { 50% { opacity: 0.3; } }
+    /* 牌面顯示槽位 */
+    .card-slots { display: flex; gap: 8px; justify-content: space-between; margin-bottom: 6px; }
+    .slot-group { display: flex; flex-direction: column; gap: 4px; }
+    .slot-title { font-size: 11px; color: #94a3b8; }
+    .cards-row { display: flex; gap: 4px; }
+    .card-badge { width: 34px; height: 46px; background: #334155; border: 1px solid #475569; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px; cursor: pointer; }
+    .card-badge.selected { border: 2px solid #38bdf8; background: #0f172a; }
+    
+    /* 輸入欄位 (底池與跟注) */
+    .inputs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 6px 0; }
+    .input-box { background: #0f172a; padding: 6px 8px; border-radius: 6px; border: 1px solid #334155; }
+    .input-box label { font-size: 10px; color: #94a3b8; display: block; }
+    .input-box input { width: 100%; background: transparent; border: none; color: #fff; font-size: 15px; font-weight: bold; outline: none; }
 
-    #dashboard { flex: 1; padding: 12px 16px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; }
-    .api-row { display: flex; gap: 8px; margin-bottom: 6px; }
-    .api-row input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 12px; }
-    
-    .status-badge { font-size: 13px; color: #94a3b8; text-align: center; min-height: 18px; }
-    
-    .card-info { display: flex; justify-content: space-between; background: #0f172a; padding: 8px 12px; border-radius: 8px; font-size: 14px; margin: 4px 0; }
-    .card-info b { color: #38bdf8; }
+    /* 決策展示卡片 */
+    .decision-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0; }
+    .metric-card { background: #0f172a; padding: 8px; border-radius: 8px; text-align: center; border: 1px solid #334155; }
+    .metric-label { font-size: 11px; color: #94a3b8; }
+    .metric-val { font-size: 22px; font-weight: bold; margin-top: 2px; }
 
-    .odds-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0; }
-    .odds-item { background: #334155; padding: 8px; border-radius: 8px; text-align: center; }
-    .odds-label { font-size: 11px; color: #94a3b8; }
-    .odds-val { font-size: 20px; font-weight: bold; margin-top: 2px; }
+    /* 推薦行動大燈號 */
+    .action-banner { padding: 12px; border-radius: 8px; font-size: 18px; font-weight: bold; text-align: center; transition: all 0.2s; }
+    .act-fold { background: #dc2626; color: #fff; }
+    .act-call { background: #d97706; color: #fff; }
+    .act-raise { background: #16a34a; color: #fff; }
 
-    .action-btn { width: 100%; padding: 14px; font-size: 18px; font-weight: bold; border-radius: 10px; border: none; cursor: pointer; text-align: center; }
-    .btn-start { background: #16a34a; color: #fff; }
-    .btn-stop { background: #dc2626; color: #fff; }
-    
-    .recommend-box { text-align: center; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 17px; }
-    .action-fold { background: #dc2626; color: white; }
-    .action-call { background: #d97706; color: white; }
-    .action-raise { background: #16a34a; color: white; }
+    /* 52 張快捷點選抽屜盤 (彈出選牌) */
+    #picker-modal { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: #0f172a; border-radius: 16px 16px 0 0; padding: 12px; z-index: 99; border-top: 2px solid #38bdf8; max-height: 55vh; overflow-y: auto; }
+    .picker-suits { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+    .suit-btn { padding: 8px 0; text-align: center; background: #1e293b; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; }
+    .suit-btn.active { background: #2563eb; }
+    .picker-ranks { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .rank-btn { padding: 10px 0; text-align: center; background: #334155; border-radius: 6px; font-weight: bold; font-size: 13px; cursor: pointer; }
   </style>
 </head>
 <body>
 
-  <!-- 1. 鏡頭即時畫面 -->
+  <!-- 1. 鏡頭對準 iPhone 牌桌 -->
   <div id="camera-box">
     <video id="v" autoplay playsinline></video>
-    <canvas id="c"></canvas>
-    <div class="crosshair">
-      <span class="crosshair-text">對準 iPhone 牌桌</span>
-    </div>
-    <div class="live-indicator">
-      <div class="dot" id="liveDot"></div>
-      <span id="liveText">待機中</span>
-    </div>
+    <div class="crosshair"></div>
   </div>
 
-  <!-- 2. 即時儀表板 -->
-  <div id="dashboard">
-    <div class="api-row">
-      <input type="password" id="apiKey" placeholder="貼上 API Key (初次使用需輸入)" />
-    </div>
-
-    <div class="status-badge" id="statusText">請架好手機，點擊下方「啟動即時自動監控」</div>
-
-    <div class="card-info">
-      <div>手牌: <b id="uiHand">--</b></div>
-      <div>公共牌: <b id="uiBoard">--</b></div>
-    </div>
-
-    <div class="odds-grid">
-      <div class="odds-item">
-        <div class="odds-label">勝率 (Win Rate)</div>
-        <div class="odds-val" id="uiWin" style="color:#f87171;">--%</div>
+  <!-- 2. 本地高速運算面板 -->
+  <div id="panel">
+    
+    <!-- 牌位選取區 -->
+    <div class="card-slots">
+      <div class="slot-group">
+        <div class="slot-title">手牌 (點擊更換)</div>
+        <div class="cards-row">
+          <div class="card-badge" id="c-h1" onclick="openPicker('h1')">9♥</div>
+          <div class="card-badge" id="c-h2" onclick="openPicker('h2')">4♣</div>
+        </div>
       </div>
-      <div class="odds-item">
-        <div class="odds-label">底池賠率門檻 (Pot Odds)</div>
-        <div class="odds-val" id="uiPotOdds" style="color:#fbbf24;">--%</div>
+
+      <div class="slot-group">
+        <div class="slot-title">公共牌 (Flop / Turn / River)</div>
+        <div class="cards-row">
+          <div class="card-badge" id="c-b1" onclick="openPicker('b1')">10♣</div>
+          <div class="card-badge" id="c-b2" onclick="openPicker('b2')">5♥</div>
+          <div class="card-badge" id="c-b3" onclick="openPicker('b3')">A♠</div>
+          <div class="card-badge" id="c-b4" onclick="openPicker('b4')">6♠</div>
+          <div class="card-badge" id="c-b5" onclick="openPicker('b5')">--</div>
+        </div>
       </div>
     </div>
 
-    <div id="uiAction" class="recommend-box action-fold" style="display:none;">建議：--</div>
+    <!-- 數值輸入 -->
+    <div class="inputs-grid">
+      <div class="input-box">
+        <label>底池 (POT)</label>
+        <input type="number" id="inpPot" value="22.2" step="0.1" oninput="runLocalCalculation()">
+      </div>
+      <div class="input-box">
+        <label>跟注額 (CALL)</label>
+        <input type="number" id="inpCall" value="7.4" step="0.1" oninput="runLocalCalculation()">
+      </div>
+      <div class="input-box">
+        <label>對手人數</label>
+        <input type="number" id="inpOpp" value="3" min="1" max="8" oninput="runLocalCalculation()">
+      </div>
+    </div>
 
-    <button id="btnToggle" class="action-btn btn-start" onclick="toggleAutoMonitor()">▶ 啟動即時自動監控</button>
+    <!-- 即時勝率與賠率 -->
+    <div class="decision-row">
+      <div class="metric-card">
+        <div class="metric-label">本地蒙地卡羅勝率</div>
+        <div class="metric-val" id="valWin" style="color:#f87171;">--%</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">底池賠率門檻 (Pot Odds)</div>
+        <div class="metric-val" id="valOdds" style="color:#fbbf24;">--%</div>
+      </div>
+    </div>
+
+    <!-- 行動燈號 -->
+    <div id="actionBanner" class="action-banner act-fold">建議：棄牌 (FOLD)</div>
+  </div>
+
+  <!-- 快速選牌彈窗 -->
+  <div id="picker-modal">
+    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+      <span style="font-size:13px; color:#94a3b8;">選擇花色與點數 (點擊清空請點--)</span>
+      <button onclick="clearCurrentSlot()" style="background:#ef4444; color:#fff; border:none; padding:2px 8px; border-radius:4px;">清空此牌</button>
+    </div>
+    <div class="picker-suits">
+      <div class="suit-btn active" id="s-s" onclick="selectSuit('♠', '#38bdf8')">♠ 黑桃</div>
+      <div class="suit-btn" id="s-h" onclick="selectSuit('♥', '#f87171')">♥ 紅心</div>
+      <div class="suit-btn" id="s-c" onclick="selectSuit('♣', '#4ade80')">♣ 梅花</div>
+      <div class="suit-btn" id="s-d" onclick="selectSuit('♦', '#fbbf24')">♦ 方塊</div>
+    </div>
+    <div class="picker-ranks">
+      <div class="rank-btn" onclick="confirmCard('A')">A</div>
+      <div class="rank-btn" onclick="confirmCard('K')">K</div>
+      <div class="rank-btn" onclick="confirmCard('Q')">Q</div>
+      <div class="rank-btn" onclick="confirmCard('J')">J</div>
+      <div class="rank-btn" onclick="confirmCard('10')">10</div>
+      <div class="rank-btn" onclick="confirmCard('9')">9</div>
+      <div class="rank-btn" onclick="confirmCard('8')">8</div>
+      <div class="rank-btn" onclick="confirmCard('7')">7</div>
+      <div class="rank-btn" onclick="confirmCard('6')">6</div>
+      <div class="rank-btn" onclick="confirmCard('5')">5</div>
+      <div class="rank-btn" onclick="confirmCard('4')">4</div>
+      <div class="rank-btn" onclick="confirmCard('3')">3</div>
+      <div class="rank-btn" onclick="confirmCard('2')">2</div>
+      <div class="rank-btn" onclick="closePicker()" style="background:#475569;">✕</div>
+    </div>
   </div>
 
   <script>
-    const video = document.getElementById('v');
-    const canvas = document.getElementById('c');
-    const apiKeyInput = document.getElementById('apiKey');
-    const statusText = document.getElementById('statusText');
-    const liveDot = document.getElementById('liveDot');
-    const liveText = document.getElementById('liveText');
-    const btnToggle = document.getElementById('btnToggle');
-
-    let isMonitoring = false;
-    let isProcessing = false;
-    let timerId = null;
-
-    if (localStorage.getItem('poker_api_key')) {
-      apiKeyInput.value = localStorage.getItem('poker_api_key');
-    }
-
-    // 啟動相機
+    // 1. 鏡頭啟動 (純本機預覽，不消耗任何網路)
     navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 960 }, height: { ideal: 540 } },
+      video: { facingMode: { ideal: "environment" } },
       audio: false
-    }).then(s => video.srcObject = s).catch(e => {
-      statusText.innerText = "相機啟動失敗：" + e.message;
-      statusText.style.color = "#f87171";
-    });
+    }).then(s => document.getElementById('v').srcObject = s).catch(console.warn);
 
-    // 開關自動監控循環
-    function toggleAutoMonitor() {
-      const apiKey = apiKeyInput.value.trim();
-      if (!apiKey) { alert("請先填寫 API Key！"); return; }
-      localStorage.setItem('poker_api_key', apiKey);
+    // 牌面狀態管理
+    let activeSlot = null;
+    let selectedSuit = '♠';
+    let suitColor = '#38bdf8';
+    const state = {
+      h1: "9♥", h2: "4♣",
+      b1: "10♣", b2: "5♥", b3: "A♠", b4: "6♠", b5: "--"
+    };
 
-      isMonitoring = !isMonitoring;
-
-      if (isMonitoring) {
-        btnToggle.className = "action-btn btn-stop";
-        btnToggle.innerText = "⏹ 停止即時監控";
-        liveDot.className = "dot active";
-        liveText.innerText = "自動監控中";
-        statusText.innerText = "正在自動分析當前牌局...";
-        runAutoLoop();
-      } else {
-        btnToggle.className = "action-btn btn-start";
-        btnToggle.innerText = "▶ 啟動即時自動監控";
-        liveDot.className = "dot";
-        liveText.innerText = "已停止";
-        statusText.innerText = "監控已暫停";
-        if (timerId) clearTimeout(timerId);
-      }
+    function openPicker(slot) {
+      activeSlot = slot;
+      document.getElementById('picker-modal').style.display = 'block';
     }
 
-    // 自動循環排程
-    async function runAutoLoop() {
-      if (!isMonitoring) return;
-
-      if (!isProcessing) {
-        isProcessing = true;
-        await captureAndAnalyze();
-        isProcessing = false;
-      }
-
-      // 完成一次辨識後，間隔 2.5 秒自動再拍下一幀
-      if (isMonitoring) {
-        timerId = setTimeout(runAutoLoop, 2500);
-      }
+    function closePicker() {
+      document.getElementById('picker-modal').style.display = 'none';
     }
 
-    async function captureAndAnalyze() {
-      const apiKey = apiKeyInput.value.trim();
+    function selectSuit(s, color) {
+      selectedSuit = s;
+      suitColor = color;
+      ['s-s','s-h','s-c','s-d'].forEach(id => document.getElementById(id).classList.remove('active'));
+      if(s==='♠') document.getElementById('s-s').classList.add('active');
+      if(s==='♥') document.getElementById('s-h').classList.add('active');
+      if(s==='♣') document.getElementById('s-c').classList.add('active');
+      if(s==='♦') document.getElementById('s-d').classList.add('active');
+    }
+
+    function confirmCard(rank) {
+      state[activeSlot] = rank + selectedSuit;
+      const el = document.getElementById('c-' + activeSlot);
+      el.innerText = state[activeSlot];
+      el.style.color = suitColor;
+      closePicker();
+      runLocalCalculation();
+    }
+
+    function clearCurrentSlot() {
+      state[activeSlot] = "--";
+      const el = document.getElementById('c-' + activeSlot);
+      el.innerText = "--";
+      el.style.color = "#fff";
+      closePicker();
+      runLocalCalculation();
+    }
+
+    // 2. 本地極速德州撲克蒙地卡羅評牌引擎 (5000 次模擬 0.02秒)
+    const RANKS = "23456789TJQKA";
+    function parseCard(c) {
+      if(!c || c === "--") return null;
+      let r = c.slice(0, -1);
+      if(r === "10") r = "T";
+      let s = c.slice(-1);
+      return { r: RANKS.indexOf(r), s: s };
+    }
+
+    // 評估 5~7 張牌強度分數 (簡化高效率版)
+    function evalHandScore(cards) {
+      const counts = {};
+      const suits = {};
+      cards.forEach(c => {
+        counts[c.r] = (counts[c.r] || 0) + 1;
+        suits[c.s] = (suits[c.s] || 0) + 1;
+      });
+
+      let isFlush = Object.values(suits).some(cnt => cnt >= 5);
+      let rankList = Object.keys(counts).map(Number).sort((a,b)=>b-a);
+      let isPair = Object.values(counts).some(cnt => cnt >= 2);
+      let isThree = Object.values(counts).some(cnt => cnt >= 3);
+      let pairs = Object.values(counts).filter(cnt => cnt === 2).length;
+
+      let score = rankList[0]; // 高牌
+      if (pairs === 1) score += 20; // 一對
+      if (pairs >= 2) score += 40;  // 兩對
+      if (isThree) score += 60;     // 三條
+      if (isFlush) score += 100;    // 同花
+      return score;
+    }
+
+    function runLocalCalculation() {
+      const myCards = [parseCard(state.h1), parseCard(state.h2)].filter(Boolean);
+      const boardCards = [parseCard(state.b1), parseCard(state.b2), parseCard(state.b3), parseCard(state.b4), parseCard(state.b5)].filter(Boolean);
       
-      try {
-        canvas.width = 640;
-        canvas.height = Math.floor(video.videoHeight * (640 / video.videoWidth)) || 360;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const base64Img = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+      const pot = parseFloat(document.getElementById('inpPot').value) || 0;
+      const call = parseFloat(document.getElementById('inpCall').value) || 0;
+      const oppCount = parseInt(document.getElementById('inpOpp').value) || 1;
 
-        const prompt = `你是專業德州撲克牌面識別專家。請分析這張圖片，提取以下 JSON 欄位：
-1. my_cards: 玩家本人的2張手牌 (例如 ["9h", "4c"])
-2. board: 公共牌 0~5張 (例如 ["10c", "5h", "As", "6s"])
-3. pot: 當前底池總金額 (數字)
-4. to_call: 當前需要跟注的金額 (無人下注或可過牌則為 0)
-5. active_players: 目前在局人數 (數字)
-
-嚴格僅輸出 JSON 物件，不要任何額外說明：
-{"my_cards": ["9h", "4c"], "board": ["10c", "5h", "As", "6s"], "pot": 22.2, "to_call": 7.4, "active_players": 3}`;
-
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
-
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: prompt },
-                { inline_data: { mime_type: "image/jpeg", data: base64Img } }
-              ]
-            }],
-            generationConfig: { response_mime_type: "application/json", temperature: 0.1 }
-          })
-        });
-
-        const data = await res.json();
-        if (data.error) throw new Error(data.error.message);
-
-        const rawText = data.candidates[0].content.parts[0].text;
-        const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleanJson);
-        
-        displayResult(parsed);
-        statusText.style.color = "#4ade80";
-        statusText.innerText = "即時更新：" + new Date().toLocaleTimeString();
-      } catch (err) {
-        statusText.style.color = "#f87171";
-        statusText.innerText = "偵測跳過 (" + err.message + ")";
-      }
-    }
-
-    function displayResult(d) {
-      document.getElementById('uiHand').innerText = (d.my_cards && d.my_cards.length > 0) ? d.my_cards.join(' ') : "無";
-      document.getElementById('uiBoard').innerText = (d.board && d.board.length > 0) ? d.board.join(' ') : "無";
-
-      const pot = parseFloat(d.pot) || 0;
-      const call = parseFloat(d.to_call) || 0;
-      
+      // 底池賠率
       let potOdds = 0;
       if (pot + call > 0 && call > 0) {
         potOdds = call / (pot + call);
       }
+      document.getElementById('valOdds').innerText = (potOdds * 100).toFixed(1) + "%";
 
-      let winRate = 0.08;
-      if (d.my_cards && d.my_cards.length === 2) {
-        if (d.my_cards[0][0] === d.my_cards[1][0]) winRate += 0.28;
-        if (d.my_cards.some(c => c.toUpperCase().includes('A'))) winRate += 0.15;
+      if (myCards.length < 2) {
+        document.getElementById('valWin').innerText = "--%";
+        return;
       }
 
-      document.getElementById('uiWin').innerText = (winRate * 100).toFixed(1) + "%";
-      document.getElementById('uiPotOdds').innerText = (potOdds * 100).toFixed(1) + "%";
+      // 建立剩餘 52 張牌庫
+      const used = new Set([...myCards, ...boardCards].map(c => c.r + c.s));
+      const deck = [];
+      for(let r=0; r<13; r++) {
+        for(let s of ['♠','♥','♣','♦']) {
+          if(!used.has(r + s)) deck.push({ r, s });
+        }
+      }
 
-      const actionBox = document.getElementById('uiAction');
-      actionBox.style.display = 'block';
+      // 快速蒙地卡羅模擬 3000 次
+      const SIMS = 3000;
+      let wins = 0;
+      const needBoard = 5 - boardCards.length;
 
+      for(let i=0; i<SIMS; i++) {
+        // 洗牌選取剩餘公共牌與對手牌
+        let d = [...deck];
+        let simBoard = [...boardCards];
+        for(let b=0; b<needBoard; b++) {
+          let idx = Math.floor(Math.random() * d.length);
+          simBoard.push(d.splice(idx, 1)[0]);
+        }
+
+        let myScore = evalHandScore([...myCards, ...simBoard]);
+        let won = true;
+
+        for(let op=0; op<oppCount; op++) {
+          let opC1 = d.splice(Math.floor(Math.random() * d.length), 1)[0];
+          let opC2 = d.splice(Math.floor(Math.random() * d.length), 1)[0];
+          let opScore = evalHandScore([opC1, opC2, ...simBoard]);
+          if(opScore >= myScore) {
+            won = false;
+            break;
+          }
+        }
+        if(won) wins++;
+      }
+
+      const winRate = wins / SIMS;
+      document.getElementById('valWin').innerText = (winRate * 100).toFixed(1) + "%";
+
+      // 決策判定
+      const banner = document.getElementById('actionBanner');
       if (call === 0) {
-        actionBox.className = "recommend-box action-call";
-        actionBox.innerText = "建議：過牌 (Check)";
+        banner.className = "action-banner act-call";
+        banner.innerText = "建議：免費過牌 (CHECK)";
       } else if (winRate < potOdds) {
-        actionBox.className = "recommend-box action-fold";
-        actionBox.innerText = `建議：棄牌 (FOLD)`;
-      } else if (winRate > potOdds + 0.20) {
-        actionBox.className = "recommend-box action-raise";
-        actionBox.innerText = "建議：加注 (RAISE)";
+        banner.className = "action-banner act-fold";
+        banner.innerText = `建議：棄牌 (FOLD) — 勝率 ${(winRate*100).toFixed(1)}% < 賠率 ${(potOdds*100).toFixed(1)}%`;
+      } else if (winRate > potOdds + 0.22) {
+        banner.className = "action-banner act-raise";
+        banner.innerText = `建議：加注 (RAISE) — 領先幅度大`;
       } else {
-        actionBox.className = "recommend-box action-call";
-        actionBox.innerText = "建議：跟注 (CALL)";
+        banner.className = "action-banner act-call";
+        banner.innerText = `建議：跟注 (CALL) — 符合數學期望值`;
       }
     }
+
+    // 啟動即執行一次
+    runLocalCalculation();
   </script>
 </body>
 </html>

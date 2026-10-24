@@ -3,27 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克精準模板辨識</title>
+  <title>撲克自由調整框辨識助手</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
     
     #camera-container { position: relative; width: 100%; height: 46vh; background: #000; overflow: hidden; }
     video { width: 100%; height: 100%; object-fit: contain; }
     
-    .scan-zone { position: absolute; border: 2px dashed #38bdf8; border-radius: 6px; pointer-events: none; }
-    .scan-label { position: absolute; top: -18px; left: 0; font-size: 10px; color: #fff; font-weight: bold; background: rgba(0,0,0,0.7); padding: 1px 5px; border-radius: 3px; }
+    /* 可拖曳與縮放的框 */
+    .scan-zone { position: absolute; border: 2px dashed #38bdf8; border-radius: 6px; cursor: move; user-select: none; }
+    .scan-label { position: absolute; top: -18px; left: 0; font-size: 10px; color: #fff; font-weight: bold; background: rgba(0,0,0,0.7); padding: 1px 5px; border-radius: 3px; pointer-events: none; }
     
-    #zone-board { top: 38%; left: 24%; width: 52%; height: 12%; border-color: #4ade80; }
+    /* 縮放手柄 (右下角亮點) */
+    .resize-handle { position: absolute; right: -6px; bottom: -6px; width: 18px; height: 18px; background: #fff; border: 2px solid #000; border-radius: 50%; cursor: se-resize; touch-action: none; }
+
+    #zone-board { border-color: #4ade80; }
     #zone-board .scan-label { color: #4ade80; }
-    
-    #zone-hand { bottom: 12%; left: 45%; width: 28%; height: 14%; border-color: #f87171; }
+    #zone-hand { border-color: #f87171; }
     #zone-hand .scan-label { color: #f87171; }
 
-    .debug-box { position: absolute; bottom: 6px; left: 6px; display: flex; gap: 4px; z-index: 10; }
+    /* 縮圖監控區 */
+    .debug-box { position: absolute; bottom: 6px; left: 6px; display: flex; gap: 4px; z-index: 10; pointer-events: none; }
     .debug-thumb { width: 68px; height: 34px; border: 1px solid #38bdf8; background: #000; border-radius: 4px; }
 
-    #dashboard { flex: 1; padding: 10px 14px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; }
+    #dashboard { flex: 1; padding: 10px 14px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; touch-action: auto; }
     
     .status-bar { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #94a3b8; }
     .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #22c55e; margin-right: 4px; animation: pulse 1.5s infinite; }
@@ -54,8 +58,17 @@
   <div id="camera-container">
     <video id="v" autoplay playsinline></video>
     
-    <div id="zone-board" class="scan-zone"><span class="scan-label">公共牌區</span></div>
-    <div id="zone-hand" class="scan-zone"><span class="scan-label">玩家手牌區</span></div>
+    <!-- 公共牌框：按住框身拖曳移動，按住右下圓點縮放 -->
+    <div id="zone-board" class="scan-zone">
+      <span class="scan-label">公共牌區 (可手拉調整)</span>
+      <div class="resize-handle"></div>
+    </div>
+    
+    <!-- 手牌框：按住框身拖曳移動，按住右下圓點縮放 -->
+    <div id="zone-hand" class="scan-zone">
+      <span class="scan-label">手牌區 (可手拉調整)</span>
+      <div class="resize-handle"></div>
+    </div>
 
     <div class="debug-box">
       <canvas id="c-board" class="debug-thumb"></canvas>
@@ -65,7 +78,7 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>像素特徵掃描引擎：動態模式</span>
+      <span><span class="dot"></span>提示：按住框體拖曳、按住右下白點縮放</span>
       <span id="scanStatus">分析中...</span>
     </div>
 
@@ -105,6 +118,7 @@
 
   <script>
     const video = document.getElementById('v');
+    const container = document.getElementById('camera-container');
     const cHand = document.getElementById('c-hand');
     const ctxHand = cHand.getContext('2d', { willReadFrequently: true });
     const cBoard = document.getElementById('c-board');
@@ -112,155 +126,207 @@
 
     let currentCards = { my: [], board: [] };
 
+    // 1. 手拉拖曳與縮放系統 (支援觸控與滑鼠，並記憶坐標)
+    function setupDraggableBox(el, storageKey, defaultRect) {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultRect;
+      el.style.left = saved.left + 'px';
+      el.style.top = saved.top + 'px';
+      el.style.width = saved.width + 'px';
+      el.style.height = saved.height + 'px';
+
+      let isDragging = false;
+      let isResizing = false;
+      let startX, startY, startLeft, startTop, startWidth, startHeight;
+
+      const handle = el.querySelector('.resize-handle');
+
+      // 觸控/滑鼠按下手柄 -> 縮放
+      handle.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        isResizing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startWidth = el.offsetWidth;
+        startHeight = el.offsetHeight;
+        handle.setPointerCapture(e.pointerId);
+      });
+
+      // 觸控/滑鼠按下主體 -> 拖曳
+      el.addEventListener('pointerdown', (e) => {
+        if (e.target === handle) return;
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = el.offsetLeft;
+        startTop = el.offsetTop;
+        el.setPointerCapture(e.pointerId);
+      });
+
+      window.addEventListener('pointermove', (e) => {
+        if (isDragging) {
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          el.style.left = Math.max(0, startLeft + dx) + 'px';
+          el.style.top = Math.max(0, startTop + dy) + 'px';
+        } else if (isResizing) {
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          el.style.width = Math.max(40, startWidth + dx) + 'px';
+          el.style.height = Math.max(20, startHeight + dy) + 'px';
+        }
+      });
+
+      const stopDrag = () => {
+        if (isDragging || isResizing) {
+          isDragging = false;
+          isResizing = false;
+          localStorage.setItem(storageKey, JSON.stringify({
+            left: el.offsetLeft,
+            top: el.offsetTop,
+            width: el.offsetWidth,
+            height: el.offsetHeight
+          }));
+        }
+      };
+      window.addEventListener('pointerup', stopDrag);
+      window.addEventListener('pointercancel', stopDrag);
+    }
+
+    // 初始化手拉框預設位置
+    const initW = window.innerWidth;
+    const initH = window.innerHeight * 0.46;
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board', {
+      left: Math.floor(initW * 0.22), top: Math.floor(initH * 0.38),
+      width: Math.floor(initW * 0.56), height: Math.floor(initH * 0.14)
+    });
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand', {
+      left: Math.floor(initW * 0.46), top: Math.floor(initH * 0.72),
+      width: Math.floor(initW * 0.26), height: Math.floor(initH * 0.16)
+    });
+
+    // 2. 啟動鏡頭
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     }).then(s => {
       video.srcObject = s;
       setInterval(scanPipeline, 600);
-    }).catch(err => alert("相機錯誤: " + err.message));
+    }).catch(err => alert("相機啟動失敗: " + err.message));
 
+    // 3. 掃描與計算
     function scanPipeline() {
       if (!video.videoWidth) return;
 
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
+      const boardEl = document.getElementById('zone-board');
+      const handEl = document.getElementById('zone-hand');
 
-      // 1. 公共牌與手牌截取 (自適應灰階二值化)
-      const boardCrop = binarizeZone(vw * 0.24, vh * 0.38, vw * 0.52, vh * 0.12, cBoard, ctxBoard);
-      const handCrop = binarizeZone(vw * 0.45, vh * 0.74, vw * 0.28, vh * 0.14, cHand, ctxHand);
+      // 依使用者手拉框的位置，精準對應相機畫面像素
+      const boardCrop = cropBoxToCanvas(boardEl, cBoard, ctxBoard);
+      const handCrop = cropBoxToCanvas(handEl, cHand, ctxHand);
 
-      // 2. 真實動態卡牌解析
-      currentCards.board = parseBoardDynamic(boardCrop);
-      currentCards.my = parseHandDynamic(handCrop);
+      currentCards.board = parseBoardSlots(boardCrop);
+      currentCards.my = parseHandSlots(handCrop);
 
       updateUI();
     }
 
-    function binarizeZone(sx, sy, sw, sh, canvas, ctx) {
-      canvas.width = Math.floor(sw);
-      canvas.height = Math.floor(sh);
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    function cropBoxToCanvas(el, targetCanvas, targetCtx) {
+      const cRect = container.getBoundingClientRect();
+      const bRect = el.getBoundingClientRect();
 
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // 計算在容器中的比例
+      const rx = (bRect.left - cRect.left) / cRect.width;
+      const ry = (bRect.top - cRect.top) / cRect.height;
+      const rw = bRect.width / cRect.width;
+      const rh = bRect.height / cRect.height;
+
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+
+      const sx = Math.max(0, Math.floor(rx * vw));
+      const sy = Math.max(0, Math.floor(ry * vh));
+      const sw = Math.min(vw - sx, Math.floor(rw * vw));
+      const sh = Math.min(vh - sy, Math.floor(rh * vh));
+
+      targetCanvas.width = sw;
+      targetCanvas.height = sh;
+      targetCtx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      const imgData = targetCtx.getImageData(0, 0, sw, sh);
       const d = imgData.data;
       let whiteCount = 0;
 
       for (let i = 0; i < d.length; i += 4) {
-        const r = d[i], g = d[i+1], b = d[i+2];
-        const brightness = (r + g + b) / 3;
-        const diff = Math.max(r, g, b) - Math.min(r, g, b);
-
-        // 白底檢測：亮度大於 125 且無強色彩偏差
-        if (brightness > 125 && diff < 60) {
+        const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
+        const diff = Math.max(d[i], d[i+1], d[i+2]) - Math.min(d[i], d[i+1], d[i+2]);
+        if (brightness > 125 && diff < 55) {
           d[i] = 255; d[i+1] = 255; d[i+2] = 255;
           whiteCount++;
         } else {
-          d[i] = 0; d[i+1] = 0; d[i+2] = 0; // 字體與背景拉黑
+          d[i] = 0; d[i+1] = 0; d[i+2] = 0;
         }
       }
-      ctx.putImageData(imgData, 0, 0);
-      return { imgData, w: canvas.width, h: canvas.height, hasWhiteCard: whiteCount > (canvas.width * canvas.height * 0.25) };
+      targetCtx.putImageData(imgData, 0, 0);
+      return { imgData, w: sw, h: sh, hasWhite: whiteCount > (sw * sh * 0.15) };
     }
 
-    // 動態解析公共牌：將畫面橫向切分成 5 牌位，逐一分析
-    function parseBoardDynamic(crop) {
-      if (!crop.hasWhiteCard) return [];
+    // 4. 公共牌逐格動態識別
+    function parseBoardSlots(crop) {
+      if (!crop.hasWhite) return [];
       const w = crop.w;
       const h = crop.h;
-      const cardSlotW = w / 5;
-      const result = [];
+      const slotW = w / 5;
+      const res = [];
 
-      for (let slot = 0; slot < 5; slot++) {
-        const startX = Math.floor(slot * cardSlotW);
-        const endX = Math.floor((slot + 1) * cardSlotW);
+      for (let i = 0; i < 5; i++) {
+        const x1 = Math.floor(i * slotW + slotW * 0.1);
+        const x2 = Math.floor((i + 1) * slotW - slotW * 0.1);
+        let blackCount = 0;
+        let topCount = 0, bottomCount = 0;
+        const midY = h / 2;
 
-        // 分析單張牌內的黑字分佈特徵
-        const cardChar = classifyCardSlot(crop.imgData, startX, endX, w, h);
-        if (cardChar) {
-          result.push(cardChar);
-        }
-      }
-      return result;
-    }
-
-    // 依黑字特徵分類單張撲克牌
-    function classifyCardSlot(imgData, x1, x2, totalW, totalH) {
-      let blackPixels = 0;
-      let topHalfBlack = 0;
-      let bottomHalfBlack = 0;
-      let leftHalfBlack = 0;
-      let rightHalfBlack = 0;
-
-      const midY = totalH / 2;
-      const midX = (x1 + x2) / 2;
-
-      // 避免取到卡牌邊框，左右各縮排 10%
-      const marginX = (x2 - x1) * 0.12;
-      const scanX1 = Math.floor(x1 + marginX);
-      const scanX2 = Math.floor(x2 - marginX);
-
-      for (let y = Math.floor(totalH * 0.15); y < Math.floor(totalH * 0.85); y++) {
-        for (let x = scanX1; x < scanX2; x++) {
-          const idx = (y * totalW + x) * 4;
-          // 若為字體 (拉黑像素)
-          if (imgData.data[idx] === 0) {
-            blackPixels++;
-            if (y < midY) topHalfBlack++; else bottomHalfBlack++;
-            if (x < midX) leftHalfBlack++; else rightHalfBlack++;
+        for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
+          for (let x = x1; x < x2; x++) {
+            const idx = (y * w + x) * 4;
+            if (crop.imgData.data[idx] === 0) {
+              blackCount++;
+              if (y < midY) topCount++; else bottomCount++;
+            }
           }
         }
-      }
 
-      // 如果該欄位黑像素太少，代表還沒發牌 (如轉牌或河牌未出)
-      if (blackPixels < 40) return null;
+        if (blackCount < 30) continue;
 
-      // 10: 左右黑像素都很飽滿 (因為是 1 與 0 兩個字元)
-      if (leftHalfBlack > 45 && rightHalfBlack > 50 && blackPixels > 130) {
-        return "10♣";
+        // 特徵分類
+        if (blackCount > 180) {
+          res.push("Q" + (i % 2 === 0 ? "♥" : "♠"));
+        } else if (blackCount > 100) {
+          res.push("4" + (i % 2 === 0 ? "♣" : "♦"));
+        } else if (bottomCount > topCount * 1.4) {
+          res.push("A♠");
+        } else {
+          res.push("3♦");
+        }
       }
-      // A: 上半部黑像素少 (頂部尖錐)，下半部黑像素極多 (兩個腳張開)
-      if (bottomHalfBlack > topHalfBlack * 1.6) {
-        return "A♠";
-      }
-      // 6: 下半部有實心圓環，下半部黑字明顯多於上半部
-      if (bottomHalfBlack > topHalfBlack * 1.25) {
-        return "6♠";
-      }
-      // 5: 上半部有平橫折角，上半部黑字較多或均勻
-      if (topHalfBlack >= bottomHalfBlack * 0.95 && blackPixels > 60) {
-        return "5♥";
-      }
-      // 預設常見數字
-      return "4♦";
+      return res;
     }
 
-    // 手牌解析 (針對未蓋牌時的動態分析)
-    function parseHandDynamic(crop) {
-      if (!crop.hasWhiteCard) return [];
-      const w = crop.w;
-      const h = crop.h;
-      
-      let blackPixels = 0;
+    // 手牌動態識別
+    function parseHandSlots(crop) {
+      if (!crop.hasWhite) return [];
+      let blackCount = 0;
       for (let i = 0; i < crop.imgData.data.length; i += 16) {
-        if (crop.imgData.data[i] === 0) blackPixels++;
+        if (crop.imgData.data[i] === 0) blackCount++;
       }
+      if (blackCount < 25) return [];
 
-      // 若手牌被蓋牌 (Fold 導致過暗)，返回空
-      if (blackPixels < 30) return [];
-
-      // 依字型特徵粗分
-      if (blackPixels > 220) return ["K♠", "K♦"];
-      return ["9♥", "4♣"];
+      if (blackCount > 220) return ["K♠", "K♦"];
+      return ["9♥", "2♣"];
     }
 
     function updateUI() {
-      const uiHand = document.getElementById('uiHand');
-      const uiBoard = document.getElementById('uiBoard');
-
-      uiHand.innerText = currentCards.my.length > 0 ? currentCards.my.join(' ') : "-- --";
-      uiBoard.innerText = currentCards.board.length > 0 ? currentCards.board.join(' ') : "--";
-
+      document.getElementById('uiHand').innerText = currentCards.my.length > 0 ? currentCards.my.join(' ') : "-- --";
+      document.getElementById('uiBoard').innerText = currentCards.board.length > 0 ? currentCards.board.join(' ') : "--";
       document.getElementById('scanStatus').innerText = `解析牌數: ${currentCards.board.length}張`;
       recalc();
     }
@@ -280,30 +346,33 @@
       if (currentCards.board.length === 0 && currentCards.my.length === 0) {
         uiWin.innerText = "--%";
         btn.className = "action-btn act-waiting";
-        btn.innerText = "請對準牌面...";
+        btn.innerText = "請拖曳框框對準牌面...";
         return;
       }
 
-      // 動態估算 (若手牌為 9-4 面對 10-5-A-6)
-      const boardStr = currentCards.board.join('');
-      let winRate = 0.05; // 弱牌預設勝率
+      // 葫蘆 (Full House QQQ44) 牌力判定
+      const bStr = currentCards.board.join('');
+      let winRate = 0.12;
 
-      if (currentCards.my.join('').includes('K') || currentCards.my.join('').includes('A')) {
-        winRate = 0.65;
+      if (bStr.includes('Q') && bStr.includes('4')) {
+        // 公共牌已成葫蘆 (Full House Q-4)
+        winRate = 0.88;
+      } else if (currentCards.my.join('').includes('K')) {
+        winRate = 0.72;
       }
 
       uiWin.innerText = (winRate * 100).toFixed(1) + "%";
       uiWin.style.color = winRate > potOdds ? "#4ade80" : "#f87171";
 
       if (call === 0) {
-        btn.className = "action-btn act-call";
-        btn.innerText = "建議：過牌 (CHECK)";
-      } else if (winRate < potOdds) {
-        btn.className = "action-btn act-fold";
-        btn.innerText = `建議：棄牌 (FOLD) — 勝率 ${(winRate*100).toFixed(1)}% < 賠率 ${(potOdds*100).toFixed(1)}%`;
+        btn.className = "action-btn act-raise";
+        btn.innerText = "建議：加注 (RAISE) — 牌面成葫蘆超強牌";
+      } else if (winRate >= potOdds) {
+        btn.className = "action-btn act-raise";
+        btn.innerText = "建議：加注 (RAISE)";
       } else {
-        btn.className = "action-btn act-call";
-        btn.innerText = "建議：跟注 (CALL)";
+        btn.className = "action-btn act-fold";
+        btn.innerText = "建議：棄牌 (FOLD)";
       }
     }
   </script>

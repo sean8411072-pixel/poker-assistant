@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克純幾何輪廓辨識</title>
+  <title>撲克精準幾何解析助手</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -73,7 +73,7 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>幾何輪廓引擎：即時運算</span>
+      <span><span class="dot"></span>形狀拓撲分析引擎：即時解析</span>
       <span id="scanStatus">分析中...</span>
     </div>
 
@@ -183,11 +183,11 @@
 
     const initW = window.innerWidth;
     const initH = window.innerHeight * 0.44;
-    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_geo_v2', {
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_topo', {
       left: Math.floor(initW * 0.18), top: Math.floor(initH * 0.38),
       width: Math.floor(initW * 0.64), height: Math.floor(initH * 0.14)
     });
-    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_geo_v2', {
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_topo', {
       left: Math.floor(initW * 0.48), top: Math.floor(initH * 0.70),
       width: Math.floor(initW * 0.26), height: Math.floor(initH * 0.16)
     });
@@ -274,7 +274,7 @@
       for (let s = 0; s < count; s++) {
         const x1 = Math.floor(s * slotW + slotW * 0.08);
         const x2 = Math.floor((s + 1) * slotW - slotW * 0.08);
-        const rank = solveCardPureGeometry(zone.imgData, x1, x2, w, h);
+        const rank = solveCardByTopology(zone.imgData, x1, x2, w, h);
         if (rank) res.push(rank);
       }
       return res;
@@ -286,73 +286,78 @@
       const h = zone.h;
       const mid = Math.floor(w / 2);
 
-      const r1 = solveCardPureGeometry(zone.imgData, Math.floor(w * 0.08), mid, w, h);
-      const r2 = solveCardPureGeometry(zone.imgData, mid, Math.floor(w * 0.92), w, h);
+      const r1 = solveCardByTopology(zone.imgData, Math.floor(w * 0.08), mid, w, h);
+      const r2 = solveCardByTopology(zone.imgData, mid, Math.floor(w * 0.92), w, h);
       const res = [];
       if (r1) res.push(r1);
       if (r2) res.push(r2);
       return res;
     }
 
-    // 核心演算法：純幾何拓撲特徵判定（不依賴色相）
-    function solveCardPureGeometry(imgData, x1, x2, totalW, totalH) {
+    // 核心演算法：精準拓撲與邊界分析
+    function solveCardByTopology(imgData, x1, x2, totalW, totalH) {
       const w = x2 - x1;
       const h = totalH;
-      let blackTotal = 0;
+
+      let minX = w, maxX = 0;
       let topHalf = 0, bottomHalf = 0;
-      let leftHalf = 0, rightHalf = 0;
-      let bottomCenter = 0;
+      let blackTotal = 0;
 
-      const midY = h / 2;
-      const midX = (x1 + x2) / 2;
-
+      // 1. 測量該字符的真實邊界與墨水分布
       for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
         for (let x = x1; x < x2; x++) {
           const idx = (y * totalW + x) * 4;
           if (imgData.data[idx] === 0) {
             blackTotal++;
-            if (y < midY) topHalf++; else bottomHalf++;
-            if (x < midX) leftHalf++; else rightHalf++;
-            if (y > h * 0.65 && Math.abs(x - midX) < w * 0.12) {
-              bottomCenter++;
-            }
+            const relX = x - x1;
+            if (relX < minX) minX = relX;
+            if (relX > maxX) maxX = relX;
+            if (y < h * 0.5) topHalf++; else bottomHalf++;
           }
         }
       }
 
-      if (blackTotal < 25) return null;
+      if (blackTotal < 30) return null;
 
-      // 1. 10: 雙字符，左右平衡且墨水面積大
-      if (leftHalf > 55 && rightHalf > 55 && blackTotal > 140) {
+      const charWidth = maxX - minX;
+      const widthRatio = charWidth / w; // 字符相對於牌位的寬度佔比
+
+      // 特徵 1：只有「10」是雙字符，寬度佔比會超過 0.72
+      if (widthRatio > 0.72) {
         return "10";
       }
 
-      // 2. A: 頂部窄、底部寬、下中央為白色鏤空（開叉特徵）
-      if (bottomHalf > topHalf * 1.40 && bottomCenter < bottomHalf * 0.12) {
-        return "A";
-      }
-
-      // 3. 6: 下半部閉合圓，下半部墨水明顯多於上半部
-      if (bottomHalf > topHalf * 1.25) {
+      // 特徵 2：A 頂部尖銳、底部大開叉（下半部墨水明顯多於上半部，且中央為三角形鏤空）
+      if (bottomHalf > topHalf * 1.35) {
+        // 區分 A 與 6：檢查下半部 75% 處是否有實心閉合圓
+        let centerHole = 0;
+        const checkY = Math.floor(h * 0.75);
+        for (let x = x1 + Math.floor(w * 0.35); x < x1 + Math.floor(w * 0.65); x++) {
+          if (imgData.data[(checkY * totalW + x) * 4] === 255) { // 白底孔洞
+            centerHole++;
+          }
+        }
+        if (centerHole > 5) return "A";
         return "6";
       }
 
-      // 4. 9: 上半部閉合圓，上半部墨水明顯多於下半部
+      // 特徵 3：9 上半部是閉合圓，上半部墨水多於下半部
       if (topHalf > bottomHalf * 1.25) {
         return "9";
       }
 
-      // 5. 5: 頂部水平橫折，上半部墨水均勻或偏多
-      if (topHalf >= bottomHalf * 0.95 && blackTotal > 55) {
+      // 特徵 4：5 頂部有一整條水平橫槓
+      let topBar = 0;
+      const barY = Math.floor(h * 0.22);
+      for (let x = x1 + Math.floor(w * 0.2); x < x1 + Math.floor(w * 0.8); x++) {
+        if (imgData.data[(barY * totalW + x) * 4] === 0) topBar++;
+      }
+      if (topBar > w * 0.45) {
         return "5";
       }
 
-      // 6. 4: 橫折骨架
-      if (blackTotal > 45) {
-        return "4";
-      }
-
-      return "3";
+      // 特徵 5：4（橫折特徵）
+      return "4";
     }
 
     function recalc() {
@@ -371,14 +376,14 @@
       if (my.length === 0) {
         uiWin.innerText = "--%";
         btn.className = "action-btn act-waiting";
-        btn.innerText = "正在分析牌面輪廓...";
+        btn.innerText = "正在分析牌面...";
         return;
       }
 
       let winRate = 0.05;
       const myStr = my.join('');
 
-      if (myStr === "94" || myStr === "49") winRate = 0.048;
+      if (myStr === "94" || myStr === "49") winRate = 0.048; // 9-4 弱牌
       else if (myStr === "AA") winRate = 0.83;
       else if (my.length === 2 && my[0] === my[1]) winRate = 0.68;
       else if (myStr.includes('A')) winRate = 0.32;

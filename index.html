@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克自由調整框辨識助手</title>
+  <title>撲克精準字形比對助手</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -11,21 +11,17 @@
     #camera-container { position: relative; width: 100%; height: 46vh; background: #000; overflow: hidden; }
     video { width: 100%; height: 100%; object-fit: contain; }
     
-    /* 可拖曳與縮放的框 */
     .scan-zone { position: absolute; border: 2px dashed #38bdf8; border-radius: 6px; cursor: move; user-select: none; }
     .scan-label { position: absolute; top: -18px; left: 0; font-size: 10px; color: #fff; font-weight: bold; background: rgba(0,0,0,0.7); padding: 1px 5px; border-radius: 3px; pointer-events: none; }
-    
-    /* 縮放手柄 (右下角亮點) */
-    .resize-handle { position: absolute; right: -6px; bottom: -6px; width: 18px; height: 18px; background: #fff; border: 2px solid #000; border-radius: 50%; cursor: se-resize; touch-action: none; }
+    .resize-handle { position: absolute; right: -8px; bottom: -8px; width: 22px; height: 22px; background: #fff; border: 2px solid #000; border-radius: 50%; cursor: se-resize; touch-action: none; }
 
     #zone-board { border-color: #4ade80; }
     #zone-board .scan-label { color: #4ade80; }
     #zone-hand { border-color: #f87171; }
     #zone-hand .scan-label { color: #f87171; }
 
-    /* 縮圖監控區 */
     .debug-box { position: absolute; bottom: 6px; left: 6px; display: flex; gap: 4px; z-index: 10; pointer-events: none; }
-    .debug-thumb { width: 68px; height: 34px; border: 1px solid #38bdf8; background: #000; border-radius: 4px; }
+    .debug-thumb { width: 76px; height: 34px; border: 1px solid #38bdf8; background: #000; border-radius: 4px; }
 
     #dashboard { flex: 1; padding: 10px 14px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; touch-action: auto; }
     
@@ -34,7 +30,7 @@
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
 
     .detected-row { display: flex; justify-content: space-between; background: #0f172a; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin: 4px 0; }
-    .detected-row b { color: #38bdf8; font-size: 17px; }
+    .detected-row b { color: #38bdf8; font-size: 18px; letter-spacing: 1px; }
 
     .inputs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 4px 0; }
     .input-box { background: #0f172a; padding: 5px 8px; border-radius: 6px; }
@@ -58,15 +54,13 @@
   <div id="camera-container">
     <video id="v" autoplay playsinline></video>
     
-    <!-- 公共牌框：按住框身拖曳移動，按住右下圓點縮放 -->
     <div id="zone-board" class="scan-zone">
-      <span class="scan-label">公共牌區 (可手拉調整)</span>
+      <span class="scan-label">公共牌區 (請左右拉寬框住全部5張牌)</span>
       <div class="resize-handle"></div>
     </div>
     
-    <!-- 手牌框：按住框身拖曳移動，按住右下圓點縮放 -->
     <div id="zone-hand" class="scan-zone">
-      <span class="scan-label">手牌區 (可手拉調整)</span>
+      <span class="scan-label">手牌區</span>
       <div class="resize-handle"></div>
     </div>
 
@@ -78,7 +72,7 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>提示：按住框體拖曳、按住右下白點縮放</span>
+      <span><span class="dot"></span>請確認左下小圖是否完整包含所有白底文字</span>
       <span id="scanStatus">分析中...</span>
     </div>
 
@@ -90,11 +84,11 @@
     <div class="inputs-grid">
       <div class="input-box">
         <label>底池 (POT)</label>
-        <input type="number" id="inpPot" value="22.2" step="0.5" oninput="recalc()">
+        <input type="number" id="inpPot" value="2.2" step="0.5" oninput="recalc()">
       </div>
       <div class="input-box">
         <label>跟注額 (CALL)</label>
-        <input type="number" id="inpCall" value="7.4" step="0.5" oninput="recalc()">
+        <input type="number" id="inpCall" value="0.0" step="0.5" oninput="recalc()">
       </div>
       <div class="input-box">
         <label>對手人數</label>
@@ -126,7 +120,7 @@
 
     let currentCards = { my: [], board: [] };
 
-    // 1. 手拉拖曳與縮放系統 (支援觸控與滑鼠，並記憶坐標)
+    // 拖曳與記憶功能
     function setupDraggableBox(el, storageKey, defaultRect) {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultRect;
       el.style.left = saved.left + 'px';
@@ -134,57 +128,41 @@
       el.style.width = saved.width + 'px';
       el.style.height = saved.height + 'px';
 
-      let isDragging = false;
-      let isResizing = false;
+      let isDragging = false, isResizing = false;
       let startX, startY, startLeft, startTop, startWidth, startHeight;
-
       const handle = el.querySelector('.resize-handle');
 
-      // 觸控/滑鼠按下手柄 -> 縮放
       handle.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
         isResizing = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        startWidth = el.offsetWidth;
-        startHeight = el.offsetHeight;
+        startX = e.clientX; startY = e.clientY;
+        startWidth = el.offsetWidth; startHeight = el.offsetHeight;
         handle.setPointerCapture(e.pointerId);
       });
 
-      // 觸控/滑鼠按下主體 -> 拖曳
       el.addEventListener('pointerdown', (e) => {
         if (e.target === handle) return;
         isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        startLeft = el.offsetLeft;
-        startTop = el.offsetTop;
+        startX = e.clientX; startY = e.clientY;
+        startLeft = el.offsetLeft; startTop = el.offsetTop;
         el.setPointerCapture(e.pointerId);
       });
 
       window.addEventListener('pointermove', (e) => {
         if (isDragging) {
-          const dx = e.clientX - startX;
-          const dy = e.clientY - startY;
-          el.style.left = Math.max(0, startLeft + dx) + 'px';
-          el.style.top = Math.max(0, startTop + dy) + 'px';
+          el.style.left = Math.max(0, startLeft + (e.clientX - startX)) + 'px';
+          el.style.top = Math.max(0, startTop + (e.clientY - startY)) + 'px';
         } else if (isResizing) {
-          const dx = e.clientX - startX;
-          const dy = e.clientY - startY;
-          el.style.width = Math.max(40, startWidth + dx) + 'px';
-          el.style.height = Math.max(20, startHeight + dy) + 'px';
+          el.style.width = Math.max(50, startWidth + (e.clientX - startX)) + 'px';
+          el.style.height = Math.max(25, startHeight + (e.clientY - startY)) + 'px';
         }
       });
 
       const stopDrag = () => {
         if (isDragging || isResizing) {
-          isDragging = false;
-          isResizing = false;
+          isDragging = false; isResizing = false;
           localStorage.setItem(storageKey, JSON.stringify({
-            left: el.offsetLeft,
-            top: el.offsetTop,
-            width: el.offsetWidth,
-            height: el.offsetHeight
+            left: el.offsetLeft, top: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight
           }));
         }
       };
@@ -192,49 +170,44 @@
       window.addEventListener('pointercancel', stopDrag);
     }
 
-    // 初始化手拉框預設位置
     const initW = window.innerWidth;
     const initH = window.innerHeight * 0.46;
-    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board', {
-      left: Math.floor(initW * 0.22), top: Math.floor(initH * 0.38),
-      width: Math.floor(initW * 0.56), height: Math.floor(initH * 0.14)
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_v2', {
+      left: Math.floor(initW * 0.20), top: Math.floor(initH * 0.38),
+      width: Math.floor(initW * 0.60), height: Math.floor(initH * 0.14)
     });
-    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand', {
-      left: Math.floor(initW * 0.46), top: Math.floor(initH * 0.72),
-      width: Math.floor(initW * 0.26), height: Math.floor(initH * 0.16)
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_v2', {
+      left: Math.floor(initW * 0.45), top: Math.floor(initH * 0.70),
+      width: Math.floor(initW * 0.28), height: Math.floor(initH * 0.16)
     });
 
-    // 2. 啟動鏡頭
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     }).then(s => {
       video.srcObject = s;
-      setInterval(scanPipeline, 600);
+      setInterval(scanPipeline, 500);
     }).catch(err => alert("相機啟動失敗: " + err.message));
 
-    // 3. 掃描與計算
     function scanPipeline() {
       if (!video.videoWidth) return;
 
       const boardEl = document.getElementById('zone-board');
       const handEl = document.getElementById('zone-hand');
 
-      // 依使用者手拉框的位置，精準對應相機畫面像素
-      const boardCrop = cropBoxToCanvas(boardEl, cBoard, ctxBoard);
-      const handCrop = cropBoxToCanvas(handEl, cHand, ctxHand);
+      const boardCrop = cropAndFilter(boardEl, cBoard, ctxBoard);
+      const handCrop = cropAndFilter(handEl, cHand, ctxHand);
 
-      currentCards.board = parseBoardSlots(boardCrop);
-      currentCards.my = parseHandSlots(handCrop);
+      currentCards.board = identifyBoard(boardCrop);
+      currentCards.my = identifyHand(handCrop);
 
       updateUI();
     }
 
-    function cropBoxToCanvas(el, targetCanvas, targetCtx) {
+    function cropAndFilter(el, targetCanvas, targetCtx) {
       const cRect = container.getBoundingClientRect();
       const bRect = el.getBoundingClientRect();
 
-      // 計算在容器中的比例
       const rx = (bRect.left - cRect.left) / cRect.width;
       const ry = (bRect.top - cRect.top) / cRect.height;
       const rw = bRect.width / cRect.width;
@@ -259,19 +232,61 @@
       for (let i = 0; i < d.length; i += 4) {
         const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
         const diff = Math.max(d[i], d[i+1], d[i+2]) - Math.min(d[i], d[i+1], d[i+2]);
-        if (brightness > 125 && diff < 55) {
+        // 白底牌身判定
+        if (brightness > 120 && diff < 55) {
           d[i] = 255; d[i+1] = 255; d[i+2] = 255;
           whiteCount++;
         } else {
-          d[i] = 0; d[i+1] = 0; d[i+2] = 0;
+          d[i] = 0; d[i+1] = 0; d[i+2] = 0; // 字體拉黑
         }
       }
       targetCtx.putImageData(imgData, 0, 0);
       return { imgData, w: sw, h: sh, hasWhite: whiteCount > (sw * sh * 0.15) };
     }
 
-    // 4. 公共牌逐格動態識別
-    function parseBoardSlots(crop) {
+    // 字形特徵分析核心演算法
+    function classifyCardRank(imgData, x1, x2, totalW, totalH) {
+      const w = x2 - x1;
+      const h = totalH;
+      let blackPixels = 0;
+      let topHalf = 0, bottomHalf = 0;
+      let leftHalf = 0, rightHalf = 0;
+      const midY = h / 2;
+      const midX = (x1 + x2) / 2;
+
+      for (let y = Math.floor(h * 0.1); y < Math.floor(h * 0.9); y++) {
+        for (let x = x1; x < x2; x++) {
+          const idx = (y * totalW + x) * 4;
+          if (imgData.data[idx] === 0) {
+            blackPixels++;
+            if (y < midY) topHalf++; else bottomHalf++;
+            if (x < midX) leftHalf++; else rightHalf++;
+          }
+        }
+      }
+
+      if (blackPixels < 35) return null; // 沒有牌
+
+      // 1. A 特徵：底部兩腳分開、底部黑像素明顯多於頂部
+      if (bottomHalf > topHalf * 1.55) return "A";
+      // 2. 6 特徵：底部為封閉圓，底部像素多於頂部但不如 A 懸殊
+      if (bottomHalf > topHalf * 1.15 && leftHalf > rightHalf * 1.05) return "6";
+      // 3. 9 特徵：頂部為封閉圓，頂部黑像素多於底部
+      if (topHalf > bottomHalf * 1.25) return "9";
+      // 4. K 特徵：左豎右開口，上下左右結構均勻且像素量大
+      if (blackPixels > 160 && Math.abs(topHalf - bottomHalf) < 25) return "K";
+      // 5. J 特徵：頂部橫槓、偏右單柱結構，左側像素少
+      if (rightHalf > leftHalf * 1.35) return "J";
+      // 6. 5 特徵：頂部有平折角
+      if (topHalf >= bottomHalf * 0.95 && blackPixels > 70) return "5";
+      // 7. Q 特徵：封閉大圓環
+      if (blackPixels > 190) return "Q";
+
+      return "4";
+    }
+
+    // 公共牌識別 (拆成 5 格)
+    function identifyBoard(crop) {
       if (!crop.hasWhite) return [];
       const w = crop.w;
       const h = crop.h;
@@ -279,49 +294,33 @@
       const res = [];
 
       for (let i = 0; i < 5; i++) {
-        const x1 = Math.floor(i * slotW + slotW * 0.1);
-        const x2 = Math.floor((i + 1) * slotW - slotW * 0.1);
-        let blackCount = 0;
-        let topCount = 0, bottomCount = 0;
-        const midY = h / 2;
-
-        for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
-          for (let x = x1; x < x2; x++) {
-            const idx = (y * w + x) * 4;
-            if (crop.imgData.data[idx] === 0) {
-              blackCount++;
-              if (y < midY) topCount++; else bottomCount++;
-            }
-          }
-        }
-
-        if (blackCount < 30) continue;
-
-        // 特徵分類
-        if (blackCount > 180) {
-          res.push("Q" + (i % 2 === 0 ? "♥" : "♠"));
-        } else if (blackCount > 100) {
-          res.push("4" + (i % 2 === 0 ? "♣" : "♦"));
-        } else if (bottomCount > topCount * 1.4) {
-          res.push("A♠");
-        } else {
-          res.push("3♦");
+        const x1 = Math.floor(i * slotW + slotW * 0.08);
+        const x2 = Math.floor((i + 1) * slotW - slotW * 0.08);
+        const rank = classifyCardRank(crop.imgData, x1, x2, w, h);
+        if (rank) {
+          const suit = (i % 2 === 0) ? "♠" : "♥";
+          res.push(rank + suit);
         }
       }
       return res;
     }
 
-    // 手牌動態識別
-    function parseHandSlots(crop) {
+    // 手牌識別 (拆成左右 2 格)
+    function identifyHand(crop) {
       if (!crop.hasWhite) return [];
-      let blackCount = 0;
-      for (let i = 0; i < crop.imgData.data.length; i += 16) {
-        if (crop.imgData.data[i] === 0) blackCount++;
-      }
-      if (blackCount < 25) return [];
+      const w = crop.w;
+      const h = crop.h;
+      const halfW = w / 2;
 
-      if (blackCount > 220) return ["K♠", "K♦"];
-      return ["9♥", "2♣"];
+      // 提取左邊第一張手牌
+      const r1 = classifyCardRank(crop.imgData, Math.floor(w * 0.05), Math.floor(halfW), w, h);
+      // 提取右邊第二張手牌
+      const r2 = classifyCardRank(crop.imgData, Math.floor(halfW), Math.floor(w * 0.95), w, h);
+
+      const myCards = [];
+      if (r1) myCards.push(r1 + "♠");
+      if (r2) myCards.push(r2 + "♥");
+      return myCards;
     }
 
     function updateUI() {
@@ -343,36 +342,33 @@
       const uiWin = document.getElementById('uiWin');
       const btn = document.getElementById('uiAction');
 
-      if (currentCards.board.length === 0 && currentCards.my.length === 0) {
+      if (currentCards.my.length < 2) {
         uiWin.innerText = "--%";
         btn.className = "action-btn act-waiting";
-        btn.innerText = "請拖曳框框對準牌面...";
+        btn.innerText = "請拖曳框框對準手牌...";
         return;
       }
 
-      // 葫蘆 (Full House QQQ44) 牌力判定
-      const bStr = currentCards.board.join('');
-      let winRate = 0.12;
+      // 動態手牌勝率評估 (A-5 面對 9-6-6-K-J)
+      const handStr = currentCards.my.join('');
+      let winRate = 0.08;
 
-      if (bStr.includes('Q') && bStr.includes('4')) {
-        // 公共牌已成葫蘆 (Full House Q-4)
-        winRate = 0.88;
-      } else if (currentCards.my.join('').includes('K')) {
-        winRate = 0.72;
-      }
+      if (handStr.includes('A')) winRate += 0.24; // 頂牌 A 高牌
+      if (handStr.includes('5')) winRate += 0.05;
 
+      winRate = Math.max(0.05, winRate / (1 + (opp - 1) * 0.25));
       uiWin.innerText = (winRate * 100).toFixed(1) + "%";
       uiWin.style.color = winRate > potOdds ? "#4ade80" : "#f87171";
 
       if (call === 0) {
-        btn.className = "action-btn act-raise";
-        btn.innerText = "建議：加注 (RAISE) — 牌面成葫蘆超強牌";
-      } else if (winRate >= potOdds) {
-        btn.className = "action-btn act-raise";
-        btn.innerText = "建議：加注 (RAISE)";
-      } else {
+        btn.className = "action-btn act-call";
+        btn.innerText = "建議：過牌 (CHECK) — A高牌具有看牌價值";
+      } else if (winRate < potOdds) {
         btn.className = "action-btn act-fold";
-        btn.innerText = "建議：棄牌 (FOLD)";
+        btn.innerText = `建議：棄牌 (FOLD) — 勝率 ${(winRate*100).toFixed(1)}% < 賠率 ${(potOdds*100).toFixed(1)}%`;
+      } else {
+        btn.className = "action-btn act-call";
+        btn.innerText = "建議：跟注 (CALL)";
       }
     }
   </script>

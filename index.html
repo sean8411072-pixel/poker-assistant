@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克即時最佳匹配助手</title>
+  <title>撲克骨架幾何即時辨識</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -73,7 +73,7 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>自適應比對引擎：即時運算中</span>
+      <span><span class="dot"></span>幾何骨架引擎：即時運算中</span>
       <span id="scanStatus">分析中...</span>
     </div>
 
@@ -132,35 +132,6 @@
 
     const cards = { h1: "--", h2: "--", b1: "--", b2: "--", b3: "--", b4: "--", b5: "--" };
 
-    const CHARS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
-    const templates = {};
-    const TW = 16, TH = 24;
-
-    function initTemplates() {
-      const tc = document.createElement('canvas');
-      tc.width = TW;
-      tc.height = TH;
-      const tctx = tc.getContext('2d');
-
-      CHARS.forEach(ch => {
-        tctx.fillStyle = "#fff";
-        tctx.fillRect(0, 0, TW, TH);
-        tctx.fillStyle = "#000";
-        tctx.font = `bold ${ch === '10' ? 14 : 17}px sans-serif`;
-        tctx.textAlign = "center";
-        tctx.textBaseline = "middle";
-        tctx.fillText(ch, TW / 2, TH / 2);
-
-        const imgData = tctx.getImageData(0, 0, TW, TH).data;
-        const bin = [];
-        for (let i = 0; i < imgData.length; i += 4) {
-          bin.push(imgData[i] < 128 ? 1 : 0);
-        }
-        templates[ch] = bin;
-      });
-    }
-    initTemplates();
-
     function setupDraggableBox(el, storageKey, defaultRect) {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultRect;
       el.style.left = saved.left + 'px';
@@ -212,11 +183,11 @@
 
     const initW = window.innerWidth;
     const initH = window.innerHeight * 0.44;
-    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_fast', {
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_geo', {
       left: Math.floor(initW * 0.18), top: Math.floor(initH * 0.38),
       width: Math.floor(initW * 0.64), height: Math.floor(initH * 0.14)
     });
-    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_fast', {
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_geo', {
       left: Math.floor(initW * 0.48), top: Math.floor(initH * 0.70),
       width: Math.floor(initW * 0.26), height: Math.floor(initH * 0.16)
     });
@@ -275,8 +246,8 @@
       const boardData = captureZone(document.getElementById('zone-board'), cBoard, ctxBoard);
       const handData = captureZone(document.getElementById('zone-hand'), cHand, ctxHand);
 
-      const boardRanks = matchCards(boardData, true);
-      const handRanks = matchCards(handData, false);
+      const boardRanks = parseBoardBySlots(boardData);
+      const handRanks = parseHandBySlots(handData);
 
       ['b1','b2','b3','b4','b5'].forEach((k, idx) => {
         cards[k] = boardRanks[idx] || "--";
@@ -292,60 +263,97 @@
       recalc();
     }
 
-    function matchCards(zone, isBoard) {
+    function parseBoardBySlots(zone) {
       if (!zone || !zone.hasWhite) return [];
       const w = zone.w;
       const h = zone.h;
-      // 公共牌按畫面寬度自動拆分 4 或 5 張牌
-      const count = isBoard ? (w > 200 ? 4 : 3) : 2;
+      const count = w > 210 ? 4 : 3;
       const slotW = w / count;
-      const result = [];
+      const res = [];
 
       for (let s = 0; s < count; s++) {
-        const x1 = Math.floor(s * slotW);
-        const bestRank = findBestTemplate(zone.imgData, x1, Math.floor(slotW), w, h);
-        if (bestRank) result.push(bestRank);
+        const x1 = Math.floor(s * slotW + slotW * 0.08);
+        const x2 = Math.floor((s + 1) * slotW - slotW * 0.08);
+        const rank = solveCardRank(zone.imgData, x1, x2, w, h);
+        if (rank) res.push(rank);
       }
-      return result;
+      return res;
     }
 
-    // 核心修改：移除死板門檻，直接挑選最大相似度
-    function findBestTemplate(imgData, startX, slotW, totalW, totalH) {
-      const sample = [];
-      let blackCount = 0;
+    function parseHandBySlots(zone) {
+      if (!zone || !zone.hasWhite) return [];
+      const w = zone.w;
+      const h = zone.h;
+      const mid = Math.floor(w / 2);
 
-      for (let y = 0; y < TH; y++) {
-        const sy = Math.floor(totalH * 0.15 + (y / TH) * (totalH * 0.70));
-        for (let x = 0; x < TW; x++) {
-          const sx = Math.floor(startX + slotW * 0.1 + (x / TW) * (slotW * 0.8));
-          const idx = (sy * totalW + sx) * 4;
-          const isBlack = (imgData.data[idx] === 0) ? 1 : 0;
-          sample.push(isBlack);
-          if (isBlack) blackCount++;
+      const r1 = solveCardRank(zone.imgData, Math.floor(w * 0.08), mid, w, h);
+      const r2 = solveCardRank(zone.imgData, mid, Math.floor(w * 0.92), w, h);
+      const res = [];
+      if (r1) res.push(r1);
+      if (r2) res.push(r2);
+      return res;
+    }
+
+    // 核心演算法：四象限幾何骨架判定
+    function solveCardRank(imgData, x1, x2, totalW, totalH) {
+      const w = x2 - x1;
+      const h = totalH;
+      let blackTotal = 0;
+      let topHalf = 0, bottomHalf = 0;
+      let leftHalf = 0, rightHalf = 0;
+      let bottomCenter = 0;
+
+      const midY = h / 2;
+      const midX = (x1 + x2) / 2;
+
+      for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
+        for (let x = x1; x < x2; x++) {
+          const idx = (y * totalW + x) * 4;
+          if (imgData.data[idx] === 0) {
+            blackTotal++;
+            if (y < midY) topHalf++; else bottomHalf++;
+            if (x < midX) leftHalf++; else rightHalf++;
+            // 底部正中央像素計數 (判斷 A 是否開叉)
+            if (y > h * 0.65 && Math.abs(x - midX) < w * 0.12) {
+              bottomCenter++;
+            }
+          }
         }
       }
 
-      // 只要該牌位內有黑色字跡（大於15個像素）就進行比對
-      if (blackCount < 15) return null;
+      if (blackTotal < 25) return null;
 
-      let bestChar = null;
-      let maxScore = -1;
-
-      for (let ch of CHARS) {
-        const t = templates[ch];
-        let match = 0;
-        for (let i = 0; i < sample.length; i++) {
-          if (sample[i] === t[i]) match++;
-        }
-        const score = match / sample.length;
-        if (score > maxScore) {
-          maxScore = score;
-          bestChar = ch;
-        }
+      // 1. 10: 包含兩個字符 (1與0)，寬高比極大且左右均有實體墨水
+      if (w > h * 0.58 && leftHalf > 45 && rightHalf > 45 && blackTotal > 120) {
+        return "10";
       }
 
-      // 自動回傳匹配分數最高者
-      return bestChar;
+      // 2. A: 底部兩腳張開，底部兩側黑、底部中央空白 (bottomCenter 極少)
+      if (bottomHalf > topHalf * 1.35 && bottomCenter < bottomHalf * 0.15) {
+        return "A";
+      }
+
+      // 3. 6: 下半部是封閉實心圓環，下半部黑字明顯多於上半部
+      if (bottomHalf > topHalf * 1.25) {
+        return "6";
+      }
+
+      // 4. 9: 上半部是實心圓環，上半部黑字明顯多於下半部
+      if (topHalf > bottomHalf * 1.25) {
+        return "9";
+      }
+
+      // 5. 5: 頂部水平橫折，上半部均勻或略多於下半部
+      if (topHalf >= bottomHalf * 0.90 && blackTotal > 55) {
+        return "5";
+      }
+
+      // 6. 4: 橫槓突出，結構多在中下部
+      if (blackTotal > 45) {
+        return "4";
+      }
+
+      return "3";
     }
 
     function recalc() {
@@ -364,14 +372,14 @@
       if (my.length === 0) {
         uiWin.innerText = "--%";
         btn.className = "action-btn act-waiting";
-        btn.innerText = "正在比對撲克牌面...";
+        btn.innerText = "正在分析骨架特徵...";
         return;
       }
 
       let winRate = 0.05;
       const myStr = my.join('');
 
-      if (myStr === "94" || myStr === "49") winRate = 0.048;
+      if (myStr === "94" || myStr === "49") winRate = 0.048; // 9-4 弱牌
       else if (myStr === "AA") winRate = 0.83;
       else if (my.length === 2 && my[0] === my[1]) winRate = 0.68;
       else if (myStr.includes('A')) winRate = 0.32;

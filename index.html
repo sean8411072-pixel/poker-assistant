@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克即時穩定範本比對助手</title>
+  <title>撲克即時最佳匹配助手</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -73,8 +73,8 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot"></span>原生高速比對引擎：運作中</span>
-      <span id="scanStatus">偵測中...</span>
+      <span><span class="dot"></span>自適應比對引擎：即時運算中</span>
+      <span id="scanStatus">分析中...</span>
     </div>
 
     <div class="card-display-row">
@@ -132,7 +132,6 @@
 
     const cards = { h1: "--", h2: "--", b1: "--", b2: "--", b3: "--", b4: "--", b5: "--" };
 
-    // 建立 13 張撲克標準範本特徵 (純原生產生，不依賴任何外部庫)
     const CHARS = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
     const templates = {};
     const TW = 16, TH = 24;
@@ -155,7 +154,7 @@
         const imgData = tctx.getImageData(0, 0, TW, TH).data;
         const bin = [];
         for (let i = 0; i < imgData.length; i += 4) {
-          bin.push(imgData[i] < 128 ? 1 : 0); // 黑字為 1，白底為 0
+          bin.push(imgData[i] < 128 ? 1 : 0);
         }
         templates[ch] = bin;
       });
@@ -230,7 +229,6 @@
       setInterval(runScanLoop, 500);
     }).catch(err => alert("相機啟動失敗: " + err.message));
 
-    // 高可靠影像裁切 (確保左下縮圖 100% 正常顯示白底黑字)
     function captureZone(el, targetCanvas, targetCtx) {
       const cRect = container.getBoundingClientRect();
       const bRect = el.getBoundingClientRect();
@@ -260,7 +258,7 @@
       for (let i = 0; i < d.length; i += 4) {
         const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
         const diff = Math.max(d[i], d[i+1], d[i+2]) - Math.min(d[i], d[i+1], d[i+2]);
-        if (brightness > 125 && diff < 60) {
+        if (brightness > 120 && diff < 60) {
           d[i] = 255; d[i+1] = 255; d[i+2] = 255;
           whiteCount++;
         } else {
@@ -268,7 +266,7 @@
         }
       }
       targetCtx.putImageData(imgData, 0, 0);
-      return { imgData, w: sw, h: sh, hasWhite: whiteCount > (sw * sh * 0.15) };
+      return { imgData, w: sw, h: sh, hasWhite: whiteCount > (sw * sh * 0.12) };
     }
 
     function runScanLoop() {
@@ -294,12 +292,12 @@
       recalc();
     }
 
-    // 歸一化範本比對核心演算法
     function matchCards(zone, isBoard) {
       if (!zone || !zone.hasWhite) return [];
       const w = zone.w;
       const h = zone.h;
-      const count = isBoard ? (w > 220 ? 4 : 3) : 2;
+      // 公共牌按畫面寬度自動拆分 4 或 5 張牌
+      const count = isBoard ? (w > 200 ? 4 : 3) : 2;
       const slotW = w / count;
       const result = [];
 
@@ -311,8 +309,8 @@
       return result;
     }
 
+    // 核心修改：移除死板門檻，直接挑選最大相似度
     function findBestTemplate(imgData, startX, slotW, totalW, totalH) {
-      // 提取該牌位中心點陣並縮放至 16x24
       const sample = [];
       let blackCount = 0;
 
@@ -321,13 +319,14 @@
         for (let x = 0; x < TW; x++) {
           const sx = Math.floor(startX + slotW * 0.1 + (x / TW) * (slotW * 0.8));
           const idx = (sy * totalW + sx) * 4;
-          const isBlack = imgData.data[idx] === 0 ? 1 : 0;
+          const isBlack = (imgData.data[idx] === 0) ? 1 : 0;
           sample.push(isBlack);
           if (isBlack) blackCount++;
         }
       }
 
-      if (blackCount < 20) return null; // 沒有文字
+      // 只要該牌位內有黑色字跡（大於15個像素）就進行比對
+      if (blackCount < 15) return null;
 
       let bestChar = null;
       let maxScore = -1;
@@ -345,7 +344,8 @@
         }
       }
 
-      return maxScore > 0.65 ? bestChar : null;
+      // 自動回傳匹配分數最高者
+      return bestChar;
     }
 
     function recalc() {

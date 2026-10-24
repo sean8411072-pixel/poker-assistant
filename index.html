@@ -176,7 +176,7 @@
 嚴格僅輸出 JSON 物件，不要任何額外說明：
 {"my_cards": ["9h", "4c"], "board": ["10c", "5h", "As", "6s"], "pot": 22.2, "to_call": 7.4, "active_players": 3}`;
 
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
         const res = await fetch(endpoint, {
           method: "POST",

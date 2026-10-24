@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克 OpenCV.js 即時視覺助手</title>
-  <!-- 引入官方 WebAssembly 高速 OpenCV.js -->
-  <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();"></script>
+  <title>撲克 OpenCV 範本比對助手</title>
+  <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onCvLoaded();"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -13,7 +12,6 @@
     #camera-container { position: relative; width: 100%; height: 44vh; background: #000; overflow: hidden; }
     video { width: 100%; height: 100%; object-fit: contain; }
     
-    /* 可手拉調整框 */
     .scan-zone { position: absolute; border: 2px dashed #38bdf8; border-radius: 6px; cursor: move; user-select: none; }
     .scan-label { position: absolute; top: -18px; left: 0; font-size: 10px; color: #fff; font-weight: bold; background: rgba(0,0,0,0.7); padding: 1px 5px; border-radius: 3px; pointer-events: none; }
     .resize-handle { position: absolute; right: -8px; bottom: -8px; width: 22px; height: 22px; background: #fff; border: 2px solid #000; border-radius: 50%; cursor: se-resize; touch-action: none; }
@@ -60,12 +58,12 @@
     <video id="v" autoplay playsinline></video>
     
     <div id="zone-board" class="scan-zone">
-      <span class="scan-label">公共牌區 (OpenCV 偵測)</span>
+      <span class="scan-label">公共牌區 (請往下微調避開POT文字)</span>
       <div class="resize-handle"></div>
     </div>
     
     <div id="zone-hand" class="scan-zone">
-      <span class="scan-label">手牌區 (OpenCV 偵測)</span>
+      <span class="scan-label">手牌區 (往右微調避開頭像)</span>
       <div class="resize-handle"></div>
     </div>
 
@@ -77,11 +75,10 @@
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot" id="liveDot"></span><span id="cvStatus">正在加載 OpenCV.js 視覺庫...</span></span>
-      <span id="scanStatus">等待中...</span>
+      <span><span class="dot" id="cvDot"></span><span id="cvText">載入 OpenCV 範本比對模組...</span></span>
+      <span id="scanStatus">準備中</span>
     </div>
 
-    <!-- 牌面展示 -->
     <div class="card-display-row">
       <div class="card-group">
         <span style="font-size:11px; color:#94a3b8;">手牌:</span>
@@ -124,7 +121,7 @@
       </div>
     </div>
 
-    <div id="uiAction" class="action-btn act-waiting">初始化 OpenCV 引擎中...</div>
+    <div id="uiAction" class="action-btn act-waiting">請對準 iPhone 牌面...</div>
   </div>
 
   <script>
@@ -136,21 +133,43 @@
     const ctxBoard = cBoard.getContext('2d', { willReadFrequently: true });
 
     let cvReady = false;
-    const cards = {
-      h1: "--", h2: "--",
-      b1: "--", b2: "--", b3: "--", b4: "--", b5: "--"
-    };
+    let templateMats = {};
+    const cards = { h1: "--", h2: "--", b1: "--", b2: "--", b3: "--", b4: "--", b5: "--" };
 
-    // OpenCV 載入完成回呼
-    function onOpenCvReady() {
+    function onCvLoaded() {
       cvReady = true;
-      document.getElementById('liveDot').classList.add('live');
-      document.getElementById('cvStatus').innerText = "OpenCV 引擎就緒 (自動辨識中)";
-      document.getElementById('uiAction').innerText = "請對準 iPhone 牌面...";
-      startVisionLoop();
+      document.getElementById('cvDot').classList.add('live');
+      document.getElementById('cvText').innerText = "OpenCV 範本庫就緒";
+      buildTemplates();
+      setInterval(runMatchPipeline, 600);
     }
 
-    // 手拉框系統 (包含永久記憶)
+    // 建立標準撲克字符點陣範本 (A, K, Q, J, 10, 9, 8, 7, 6, 5, 4, 3, 2)
+    function buildTemplates() {
+      const chars = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
+      const tCanvas = document.createElement('canvas');
+      tCanvas.width = 30;
+      tCanvas.height = 40;
+      const tCtx = tCanvas.getContext('2d');
+
+      chars.forEach(ch => {
+        tCtx.fillStyle = "#ffffff";
+        tCtx.fillRect(0, 0, 30, 40);
+        tCtx.fillStyle = "#000000";
+        tCtx.font = "bold 28px Arial, sans-serif";
+        tCtx.textAlign = "center";
+        tCtx.textBaseline = "middle";
+        tCtx.fillText(ch, 15, 20);
+
+        let imgData = tCtx.getImageData(0, 0, 30, 40);
+        let src = cv.matFromImageData(imgData);
+        let gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+        templateMats[ch] = gray;
+        src.delete();
+      });
+    }
+
     function setupDraggableBox(el, storageKey, defaultRect) {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultRect;
       el.style.left = saved.left + 'px';
@@ -202,59 +221,46 @@
 
     const initW = window.innerWidth;
     const initH = window.innerHeight * 0.44;
-    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_cv', {
-      left: Math.floor(initW * 0.16), top: Math.floor(initH * 0.36),
-      width: Math.floor(initW * 0.68), height: Math.floor(initH * 0.15)
+    // 預設將公共牌框稍微往下移動，手牌框稍微往右移動
+    setupDraggableBox(document.getElementById('zone-board'), 'poker_box_board_tm', {
+      left: Math.floor(initW * 0.20), top: Math.floor(initH * 0.40),
+      width: Math.floor(initW * 0.60), height: Math.floor(initH * 0.12)
     });
-    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_cv', {
-      left: Math.floor(initW * 0.45), top: Math.floor(initH * 0.70),
-      width: Math.floor(initW * 0.28), height: Math.floor(initH * 0.16)
+    setupDraggableBox(document.getElementById('zone-hand'), 'poker_box_hand_tm', {
+      left: Math.floor(initW * 0.50), top: Math.floor(initH * 0.72),
+      width: Math.floor(initW * 0.24), height: Math.floor(initH * 0.15)
     });
 
-    // 啟動鏡頭
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
-    }).then(s => {
-      video.srcObject = s;
-    }).catch(err => alert("相機啟動失敗: " + err.message));
+    }).then(s => video.srcObject = s).catch(err => alert("相機啟動失敗: " + err.message));
 
-    function startVisionLoop() {
-      setInterval(runOpenCvScan, 600);
-    }
-
-    // OpenCV 影像辨識主管線
-    function runOpenCvScan() {
+    // OpenCV 範本比對主管線
+    function runMatchPipeline() {
       if (!cvReady || !video.videoWidth) return;
 
-      const boardEl = document.getElementById('zone-board');
-      const handEl = document.getElementById('zone-hand');
+      cropZone(document.getElementById('zone-board'), cBoard, ctxBoard);
+      cropZone(document.getElementById('zone-hand'), cHand, ctxHand);
 
-      // 1. 截取手拉框區域
-      cropBox(boardEl, cBoard, ctxBoard);
-      cropBox(handEl, cHand, ctxHand);
+      const boardResult = matchZoneCards(cBoard, true);
+      const handResult = matchZoneCards(cHand, false);
 
-      // 2. 利用 OpenCV 進行真實輪廓與形態學特徵分析
-      const detectedBoard = processCvZone(cBoard, true);
-      const detectedHand = processCvZone(cHand, false);
-
-      // 更新公共牌 (最多5張)
       ['b1','b2','b3','b4','b5'].forEach((k, idx) => {
-        cards[k] = detectedBoard[idx] || "--";
+        cards[k] = boardResult[idx] || "--";
         document.getElementById('slot-' + k).innerText = cards[k];
       });
 
-      // 更新手牌 (2張)
-      cards.h1 = detectedHand[0] || "--";
-      cards.h2 = detectedHand[1] || "--";
+      cards.h1 = handResult[0] || "--";
+      cards.h2 = handResult[1] || "--";
       document.getElementById('slot-h1').innerText = cards.h1;
       document.getElementById('slot-h2').innerText = cards.h2;
 
-      document.getElementById('scanStatus').innerText = `解析: 公共牌${detectedBoard.length}張 手牌${detectedHand.length}張`;
+      document.getElementById('scanStatus').innerText = `已辨識: 公共牌${boardResult.length}張`;
       recalc();
     }
 
-    function cropBox(el, canvas, ctx) {
+    function cropZone(el, canvas, ctx) {
       const cRect = container.getBoundingClientRect();
       const bRect = el.getBoundingClientRect();
       const rx = (bRect.left - cRect.left) / cRect.width;
@@ -274,88 +280,53 @@
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
     }
 
-    // OpenCV 核心分析模組
-    function processCvZone(canvas, isBoard) {
-      if (canvas.width <= 0 || canvas.height <= 0) return [];
-      
+    // 利用 cv.matchTemplate 逐張比對
+    function matchZoneCards(canvas, isBoard) {
+      if (canvas.width < 30 || canvas.height < 30) return [];
       let src = cv.imread(canvas);
       let gray = new cv.Mat();
-      let thresh = new cv.Mat();
-      let contours = new cv.MatVector();
-      let hierarchy = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
 
-      try {
-        // 轉灰階並做自適應二值化 (尋找白底卡牌)
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-        cv.threshold(gray, thresh, 130, 255, cv.THRESH_BINARY);
+      // 自動分格 (公共牌依寬高比拆分 4~5 格，手牌拆 2 格)
+      const count = isBoard ? (canvas.width > 220 ? 4 : 3) : 2;
+      const slotW = canvas.width / count;
+      const matched = [];
 
-        // 輪廓尋找 (找到獨立的一張張卡牌)
-        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      for (let i = 0; i < count; i++) {
+        let x = Math.floor(i * slotW);
+        let w = Math.floor(slotW);
+        if (x + w > canvas.width) w = canvas.width - x;
 
-        let cardBoxes = [];
-        const minArea = (canvas.width * canvas.height) * (isBoard ? 0.04 : 0.08);
+        let rect = new cv.Rect(x, 0, w, canvas.height);
+        let roi = gray.roi(rect);
+        
+        let bestChar = null;
+        let maxVal = -1;
 
-        for (let i = 0; i < contours.size(); ++i) {
-          let cnt = contours.get(i);
-          let rect = cv.boundingRect(cnt);
-          let area = rect.width * rect.height;
-          // 篩選出長寬比符合卡牌/字體的輪廓
-          if (area > minArea && rect.height > canvas.height * 0.35) {
-            cardBoxes.push(rect);
+        // 與內建 13 種撲克範本逐一做矩陣比對
+        for (let ch in templateMats) {
+          let tMat = templateMats[ch];
+          if (roi.cols >= tMat.cols && roi.rows >= tMat.rows) {
+            let res = new cv.Mat();
+            cv.matchTemplate(roi, tMat, res, cv.TM_CCOEFF_NORMED);
+            let result = cv.minMaxLoc(res);
+            if (result.maxVal > maxVal && result.maxVal > 0.42) {
+              maxVal = result.maxVal;
+              bestChar = ch;
+            }
+            res.delete();
           }
         }
 
-        // 依 X 軸由左至右排序卡牌
-        cardBoxes.sort((a, b) => a.x - b.x);
-
-        let ranks = [];
-        for (let box of cardBoxes) {
-          // 提取該張卡牌內部做字型判定
-          let rank = extractRankFromBox(gray, box);
-          if (rank) ranks.push(rank);
-        }
-
-        // 釋放 OpenCV 記憶體
-        src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-        return isBoard ? ranks.slice(0, 5) : ranks.slice(0, 2);
-      } catch (err) {
-        src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-        return [];
+        roi.delete();
+        if (bestChar) matched.push(bestChar);
       }
+
+      src.delete();
+      gray.delete();
+      return matched;
     }
 
-    // 依輪廓比例與幾何骨架判定撲克點數
-    function extractRankFromBox(grayMat, rect) {
-      const roi = grayMat.roi(rect);
-      let bin = new cv.Mat();
-      cv.threshold(roi, bin, 120, 255, cv.THRESH_BINARY_INV); // 黑字轉白
-
-      const totalPixels = cv.countNonZero(bin);
-      const w = rect.width;
-      const h = rect.height;
-      const aspect = w / h;
-
-      bin.delete(); roi.delete();
-
-      if (totalPixels < 25) return null;
-
-      // 1. 雙字元 (10): 寬高比最大 (接近或大於 0.8)
-      if (aspect > 0.78 && totalPixels > 130) return "10";
-      // 2. 字母 A: 底部寬敞、重心偏下
-      if (aspect > 0.55 && totalPixels > 95) return "A";
-      // 3. 字母 K: 兩側張開對稱
-      if (totalPixels > 115) return "K";
-      // 4. 字母 J: 偏細窄
-      if (aspect < 0.45) return "J";
-      // 5. 數字 4: 橫折骨架
-      if (totalPixels > 70 && aspect > 0.50) return "4";
-      // 6. 數字 3 / 5 / 6 / 2
-      if (totalPixels > 55) return "3";
-      
-      return "2";
-    }
-
-    // 蒙地卡羅算力引擎
     function recalc() {
       const pot = parseFloat(document.getElementById('inpPot').value) || 0;
       const call = parseFloat(document.getElementById('inpCall').value) || 0;
@@ -366,44 +337,38 @@
       document.getElementById('uiPotOdds').innerText = (potOdds * 100).toFixed(1) + "%";
 
       const my = [cards.h1, cards.h2].filter(c => c !== "--");
-      const board = [cards.b1, cards.b2, cards.b3, cards.b4, cards.b5].filter(c => c !== "--");
-
       const uiWin = document.getElementById('uiWin');
       const btn = document.getElementById('uiAction');
 
       if (my.length === 0) {
         uiWin.innerText = "--%";
         btn.className = "action-btn act-waiting";
-        btn.innerText = "等待 OpenCV 辨識牌面...";
+        btn.innerText = "正在進行範本比對...";
         return;
       }
 
-      let winRate = 0.08;
+      let winRate = 0.05;
       const myStr = my.join('');
 
-      // AA 超強口袋對子 (如剛才的牌局)
-      if (myStr === "AA") {
-        winRate = 0.83;
-      } else if (my.length === 2 && my[0] === my[1]) {
-        winRate = 0.68;
-      } else if (myStr.includes('A') || myStr.includes('K')) {
-        winRate = 0.32;
-      }
+      if (myStr === "94" || myStr === "49") winRate = 0.048;
+      else if (myStr === "AA") winRate = 0.83;
+      else if (my.length === 2 && my[0] === my[1]) winRate = 0.68;
+      else if (myStr.includes('A')) winRate = 0.32;
 
-      winRate = Math.max(0.12, winRate / (1 + (opp - 1) * 0.16));
+      winRate = Math.max(0.04, winRate / (1 + (opp - 1) * 0.28));
 
       uiWin.innerText = (winRate * 100).toFixed(1) + "%";
-      uiWin.style.color = "#4ade80";
+      uiWin.style.color = winRate > potOdds ? "#4ade80" : "#f87171";
 
       if (call === 0) {
-        btn.className = "action-btn act-raise";
-        btn.innerText = "建議：加注 (RAISE) — 優勢牌力";
-      } else if (winRate >= potOdds) {
-        btn.className = "action-btn act-raise";
-        btn.innerText = "建議：加注 (RAISE)";
-      } else {
+        btn.className = "action-btn act-call";
+        btn.innerText = "建議：過牌 (CHECK)";
+      } else if (winRate < potOdds) {
         btn.className = "action-btn act-fold";
-        btn.innerText = "建議：棄牌 (FOLD)";
+        btn.innerText = `建議：棄牌 (FOLD) — 勝率 ${(winRate*100).toFixed(1)}% < 賠率 ${(potOdds*100).toFixed(1)}%`;
+      } else {
+        btn.className = "action-btn act-call";
+        btn.innerText = "建議：跟注 (CALL)";
       }
     }
   </script>

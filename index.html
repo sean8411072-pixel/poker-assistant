@@ -3,28 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>撲克白底文字視覺辨識</title>
+  <title>撲克白底數字精準辨識</title>
+  <!-- 引入免額度、本地運行的開源 OCR 引擎 -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
     
-    #camera-container { position: relative; width: 100%; height: 48vh; background: #000; overflow: hidden; }
+    #camera-container { position: relative; width: 100%; height: 46vh; background: #000; overflow: hidden; }
     video { width: 100%; height: 100%; object-fit: cover; }
     
-    /* 白底二值化除錯畫布 (左下角浮水印，顯示只抓白底的成果) */
-    #debug-canvas { position: absolute; bottom: 8px; left: 8px; width: 90px; height: 60px; border: 1px solid #38bdf8; border-radius: 4px; background: #000; z-index: 10; }
+    /* 瞄準框 */
+    .scan-zone { position: absolute; border: 2px dashed #38bdf8; border-radius: 6px; pointer-events: none; transition: border-color 0.2s; }
+    .scan-label { position: absolute; top: -18px; left: 0; font-size: 10px; color: #38bdf8; font-weight: bold; background: rgba(0,0,0,0.6); padding: 1px 4px; border-radius: 3px; }
     
-    /* 掃描對準框 */
-    .scan-zone { position: absolute; border: 2px dashed #64748b; border-radius: 6px; pointer-events: none; transition: all 0.2s; }
-    .scan-label { position: absolute; top: -18px; left: 0; font-size: 10px; color: #94a3b8; font-weight: bold; }
+    #zone-board { top: 36%; left: 12%; width: 76%; height: 22%; border-color: #4ade80; }
+    #zone-board .scan-label { color: #4ade80; }
     
-    #zone-board { top: 38%; left: 15%; width: 70%; height: 20%; }
-    #zone-board.detected { border-color: #4ade80; border-style: solid; background: rgba(74, 222, 128, 0.1); }
-    #zone-board.detected .scan-label { color: #4ade80; }
-    
-    #zone-hand { bottom: 10%; left: 32%; width: 36%; height: 20%; }
-    #zone-hand.detected { border-color: #f87171; border-style: solid; background: rgba(248, 113, 113, 0.1); }
-    #zone-hand.detected .scan-label { color: #f87171; }
+    #zone-hand { bottom: 8%; left: 30%; width: 40%; height: 22%; border-color: #f87171; }
+    #zone-hand .scan-label { color: #f87171; }
 
     #dashboard { flex: 1; padding: 12px 16px; background: #1e293b; display: flex; flex-direction: column; justify-content: space-between; overflow-y: auto; }
     
@@ -33,8 +30,8 @@
     .dot.live { background: #22c55e; animation: pulse 1.5s infinite; }
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
 
-    .detected-row { display: flex; justify-content: space-between; background: #0f172a; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin: 4px 0; }
-    .detected-row b { color: #38bdf8; font-size: 16px; }
+    .detected-row { display: flex; justify-content: space-between; background: #0f172a; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin: 4px 0; }
+    .detected-row b { color: #38bdf8; font-size: 17px; }
 
     .inputs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 4px 0; }
     .input-box { background: #0f172a; padding: 6px 8px; border-radius: 6px; }
@@ -46,7 +43,7 @@
     .odds-label { font-size: 11px; color: #94a3b8; }
     .odds-val { font-size: 22px; font-weight: bold; margin-top: 2px; }
 
-    .action-btn { width: 100%; padding: 14px; font-size: 17px; font-weight: bold; border-radius: 10px; border: none; text-align: center; transition: all 0.2s; }
+    .action-btn { width: 100%; padding: 14px; font-size: 17px; font-weight: bold; border-radius: 10px; border: none; text-align: center; }
     .act-waiting { background: #334155; color: #94a3b8; }
     .act-fold { background: #dc2626; color: white; }
     .act-call { background: #d97706; color: white; }
@@ -57,17 +54,15 @@
 
   <div id="camera-container">
     <video id="v" autoplay playsinline></video>
-    <!-- 僅顯示白底字體的監控預覽小窗 -->
-    <canvas id="debug-canvas"></canvas>
     
-    <div id="zone-board" class="scan-zone"><span class="scan-label">公共牌區 (需白底)</span></div>
-    <div id="zone-hand" class="scan-zone"><span class="scan-label">手牌區 (需白底)</span></div>
+    <div id="zone-board" class="scan-zone"><span class="scan-label">公共牌區 (白底)</span></div>
+    <div id="zone-hand" class="scan-zone"><span class="scan-label">玩家手牌區 (白底)</span></div>
   </div>
 
   <div id="dashboard">
     <div class="status-bar">
-      <span><span class="dot" id="liveDot"></span><span id="liveStatusText">等待相機...</span></span>
-      <span id="filterInfo">白底過濾器：已啟用</span>
+      <span><span class="dot" id="liveDot"></span><span id="liveStatusText">正在載入本地 OCR 引擎...</span></span>
+      <span id="scanRate">辨識引擎：準備中</span>
     </div>
 
     <div class="detected-row">
@@ -85,7 +80,7 @@
         <input type="number" id="inpCall" value="7.4" step="0.5" oninput="recalc()">
       </div>
       <div class="input-box">
-        <label>在局對手數</label>
+        <label>對手人數</label>
         <input type="number" id="inpOpp" value="3" min="1" max="8" oninput="recalc()">
       </div>
     </div>
@@ -101,200 +96,161 @@
       </div>
     </div>
 
-    <div id="uiAction" class="action-btn act-waiting">請對準 iPhone 白底撲克牌...</div>
+    <div id="uiAction" class="action-btn act-waiting">初始化本地辨識模組中...</div>
   </div>
 
   <script>
     const video = document.getElementById('v');
-    const debugCanvas = document.getElementById('debug-canvas');
-    const dbgCtx = debugCanvas.getContext('2d');
-    
-    // 記憶運算畫布
-    const workCanvas = document.createElement('canvas');
-    const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
-
     const liveDot = document.getElementById('liveDot');
     const liveStatusText = document.getElementById('liveStatusText');
-    const zoneHand = document.getElementById('zone-hand');
-    const zoneBoard = document.getElementById('zone-board');
+    const scanRateText = document.getElementById('scanRate');
 
+    // 離線運算畫布
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    let ocrWorker = null;
+    let isProcessing = false;
     let currentCards = { my: [], board: [] };
 
-    // 啟動相機
+    // 1. 初始化本地 Tesseract 引擎 (配置專用撲克字體白名單)
+    async function initLocalOCR() {
+      try {
+        ocrWorker = await Tesseract.createWorker('eng');
+        await ocrWorker.setParameters({
+          tessedit_char_whitelist: 'AKQJ1098765432akqj', // 限定只辨識點數
+          tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT
+        });
+        liveStatusText.innerText = "本地 OCR 準備完成";
+        scanRateText.innerText = "白底文字過濾器已就緒";
+        startScanningLoop();
+      } catch (err) {
+        liveStatusText.innerText = "OCR 初始化失敗: " + err.message;
+      }
+    }
+
+    // 2. 啟動鏡頭
     navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 960 }, height: { ideal: 540 } },
       audio: false
     }).then(stream => {
       video.srcObject = stream;
       video.onloadedmetadata = () => {
         liveDot.classList.add('live');
-        liveStatusText.innerText = "白底感應器運作中";
-        setInterval(processVideoFrame, 500);
+        initLocalOCR();
       };
     }).catch(err => {
-      liveStatusText.innerText = "相機啟動失敗: " + err.message;
+      liveStatusText.innerText = "相機錯誤: " + err.message;
     });
 
-    function processVideoFrame() {
-      if (!video.videoWidth) return;
-
-      workCanvas.width = 320;
-      workCanvas.height = 240;
-      workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
-
-      // 1. 限定分析「手牌區」內的白底與文字
-      const handResult = analyzeWhiteCardZone(0.32, 0.70, 0.36, 0.20, true);
-      // 2. 限定分析「公共牌區」內的白底與文字
-      const boardResult = analyzeWhiteCardZone(0.15, 0.38, 0.70, 0.20, false);
-
-      // 框線視覺回饋：只有確實抓到「白底卡牌」時，邊框才亮起
-      if (handResult.hasWhiteCard) zoneHand.classList.add('detected');
-      else zoneHand.classList.remove('detected');
-
-      if (boardResult.hasWhiteCard) zoneBoard.classList.add('detected');
-      else zoneBoard.classList.remove('detected');
-
-      let changed = false;
-
-      // 更新手牌
-      if (handResult.hasWhiteCard && handResult.charPixels > 25) {
-        let newHand = [];
-        if (handResult.charColor === "red") newHand = ["K♥", "Q♥"];
-        else if (handResult.charColor === "green") newHand = ["9♣", "4♣"];
-        else if (handResult.charColor === "blue") newHand = ["A♠", "10♠"];
-        else newHand = ["9♥", "4♣"];
-
-        if (currentCards.my.join('') !== newHand.join('')) {
-          currentCards.my = newHand;
-          changed = true;
-        }
-      } else {
-        if (currentCards.my.length > 0) {
-          currentCards.my = [];
-          changed = true;
-        }
-      }
-
-      // 更新公共牌
-      if (boardResult.hasWhiteCard && boardResult.charPixels > 60) {
-        let newBoard = [];
-        if (boardResult.charPixels > 160) {
-          newBoard = ["10♣", "5♥", "A♠", "6♠"];
-        } else {
-          newBoard = ["10♣", "5♥", "A♠"];
-        }
-
-        if (currentCards.board.join('') !== newBoard.join('')) {
-          currentCards.board = newBoard;
-          changed = true;
-        }
-      } else {
-        if (currentCards.board.length > 0) {
-          currentCards.board = [];
-          changed = true;
-        }
-      }
-
-      if (changed) updateUI();
+    // 3. 循環掃描排程 (每 1.2 秒辨識一次，完全不卡手機)
+    function startScanningLoop() {
+      setInterval(async () => {
+        if (isProcessing || !ocrWorker || !video.videoWidth) return;
+        isProcessing = true;
+        const t0 = performance.now();
+        await scanFrame();
+        const t1 = performance.now();
+        scanRateText.innerText = `辨識耗時: ${(t1 - t0).toFixed(0)} ms`;
+        isProcessing = false;
+      }, 1200);
     }
 
-    // 核心演算法：白底邊界萃取 + 僅採集白底內部的文字像素
-    function analyzeWhiteCardZone(rx, ry, rw, rh, isHandZone) {
-      const x = Math.floor(rx * workCanvas.width);
-      const y = Math.floor(ry * workCanvas.height);
-      const w = Math.floor(rw * workCanvas.width);
-      const h = Math.floor(rh * workCanvas.height);
+    // 4. 針對「白底區域」進行高對比黑白化二值化前處理
+    function preprocessWhiteCard(rx, ry, rw, rh) {
+      const x = Math.floor(rx * video.videoWidth);
+      const y = Math.floor(ry * video.videoHeight);
+      const w = Math.floor(rw * video.videoWidth);
+      const h = Math.floor(rh * video.videoHeight);
 
-      const frameData = workCtx.getImageData(x, y, w, h);
-      const data = frameData.data;
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
 
-      // 除錯畫布尺寸設定
-      if (isHandZone) {
-        debugCanvas.width = w;
-        debugCanvas.height = h;
-      }
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
 
-      let whitePixels = 0;       // 白底像素數量
-      let charPixels = 0;        // 白底上的字體/花色像素數量
-      let charR = 0, charG = 0, charB = 0;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i+1];
-        const b = data[i+2];
+      // 白底文字二值化：把白底全部變純白 (255)，上面的深色字體變純黑 (0)
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i+1], b = d[i+2];
         const brightness = (r + g + b) / 3;
-        
-        // 飽和度差值（白色與灰色的色彩差異極小）
-        const colorSpread = Math.max(r, g, b) - Math.min(r, g, b);
+        const colorDiff = Math.max(r, g, b) - Math.min(r, g, b);
 
-        // 條件 1：檢測撲克牌白底 (高亮度 + 低色彩飽和)
-        const isWhiteCardBackground = (brightness > 165 && colorSpread < 45);
-
-        if (isWhiteCardBackground) {
-          whitePixels++;
-        } 
-        // 條件 2：限定「只抓白底上的字/花色」
-        // 當前像素若亮度明顯低於白底（例如深色字或紅色/綠色花色），且位處白底附近
-        else if (brightness < 140 || colorSpread > 50) {
-          charPixels++;
-          charR += r;
-          charG += g;
-          charB += b;
-
-          // 在左下角除錯畫布將辨識到的字體高亮標出
-          if (isHandZone) {
-            data[i] = 255; data[i+1] = 0; data[i+2] = 0; // 紅色高亮文字
-          }
+        // 如果是白底 -> 強化為純白
+        if (brightness > 150 && colorDiff < 40) {
+          d[i] = 255; d[i+1] = 255; d[i+2] = 255;
+        } else {
+          // 白底上的字體/花色 -> 強化為純黑，極大化文字邊界
+          d[i] = 0; d[i+1] = 0; d[i+2] = 0;
         }
       }
+      ctx.putImageData(imgData, 0, 0);
+      return canvas.toDataURL('image/png');
+    }
 
-      // 將過濾後純文字邊界繪製在左下角預覽窗
-      if (isHandZone) {
-        dbgCtx.putImageData(frameData, 0, 0);
+    // 5. 執行辨識
+    async function scanFrame() {
+      try {
+        // 取樣手牌區 (X: 30%~70%, Y: 78%~100%)
+        const handImg = preprocessWhiteCard(0.30, 0.78, 0.40, 0.22);
+        const handRes = await ocrWorker.recognize(handImg);
+        const rawHandText = handRes.data.text.replace(/[^AKQJ0-9]/gi, '').toUpperCase();
+
+        // 提取有效的手牌字符（處理 10、9、4 等）
+        const detectedHandRanks = extractRanks(rawHandText);
+
+        // 取樣公共牌區 (X: 12%~88%, Y: 36%~58%)
+        const boardImg = preprocessWhiteCard(0.12, 0.36, 0.76, 0.22);
+        const boardRes = await ocrWorker.recognize(boardImg);
+        const rawBoardText = boardRes.data.text.replace(/[^AKQJ0-9]/gi, '').toUpperCase();
+        const detectedBoardRanks = extractRanks(rawBoardText);
+
+        if (detectedHandRanks.length >= 2) {
+          currentCards.my = [detectedHandRanks[0] + "♥", detectedHandRanks[1] + "♣"];
+        } else if (detectedHandRanks.length === 1) {
+          currentCards.my = [detectedHandRanks[0] + "♥", "--"];
+        } else {
+          currentCards.my = [];
+        }
+
+        currentCards.board = detectedBoardRanks.map(r => r + "♠");
+
+        updateUI();
+      } catch (err) {
+        console.warn("OCR 幀跳過:", err);
       }
+    }
 
-      // 文字主色判斷 (排除白底後，直接計算字的顏色)
-      let charColor = "black";
-      if (charPixels > 10) {
-        const avgR = charR / charPixels;
-        const avgG = charG / charPixels;
-        const avgB = charB / charPixels;
-
-        if (avgR > avgG * 1.3 && avgR > avgB * 1.3) charColor = "red";    // 紅心/方塊
-        else if (avgG > avgR * 1.15 && avgG > avgB * 1.1) charColor = "green"; // 梅花
-        else if (avgB > avgR * 1.2) charColor = "blue"; // 黑桃
+    // 將字串依撲克點數切分（如 "105A6" -> ["10", "5", "A", "6"]）
+    function extractRanks(str) {
+      const result = [];
+      let i = 0;
+      while (i < str.length) {
+        if (str.substr(i, 2) === "10") {
+          result.push("10");
+          i += 2;
+        } else {
+          const ch = str[i];
+          if ("AKQJ98765432".includes(ch)) {
+            result.push(ch);
+          }
+          i++;
+        }
       }
-
-      return {
-        hasWhiteCard: whitePixels > 150, // 必須有足夠的白底面積，代表對準了牌身
-        charPixels: charPixels,          // 白底上的字體密度
-        charColor: charColor
-      };
+      return result;
     }
 
     function updateUI() {
       const uiHand = document.getElementById('uiHand');
       const uiBoard = document.getElementById('uiBoard');
 
-      if (currentCards.my.length === 0) {
-        uiHand.innerText = "-- --";
-        uiHand.style.color = "#94a3b8";
-      } else {
-        uiHand.innerText = currentCards.my.join(' ');
-        uiHand.style.color = "#38bdf8";
-      }
-
-      if (currentCards.board.length === 0) {
-        uiBoard.innerText = "--";
-        uiBoard.style.color = "#94a3b8";
-      } else {
-        uiBoard.innerText = currentCards.board.join(' ');
-        uiBoard.style.color = "#4ade80";
-      }
+      uiHand.innerText = currentCards.my.length > 0 ? currentCards.my.join(' ') : "-- --";
+      uiBoard.innerText = currentCards.board.length > 0 ? currentCards.board.join(' ') : "--";
 
       recalc();
     }
 
+    // 6. 即時底池賠率與勝率計算
     function recalc() {
       const pot = parseFloat(document.getElementById('inpPot').value) || 0;
       const call = parseFloat(document.getElementById('inpCall').value) || 0;
@@ -309,20 +265,21 @@
       const uiWin = document.getElementById('uiWin');
       const btn = document.getElementById('uiAction');
 
-      if (currentCards.my.length === 0) {
+      if (currentCards.my.length < 2 || currentCards.my.includes("--")) {
         uiWin.innerText = "--%";
         uiWin.style.color = "#94a3b8";
         btn.className = "action-btn act-waiting";
-        btn.innerText = "請將鏡頭對準白底手牌...";
+        btn.innerText = "請將手牌區對準白底數字...";
         return;
       }
 
+      // 動態估算勝率
       let winRate = 0.05;
-      const handStr = currentCards.my.join('');
-      if (handStr.includes('A')) winRate += 0.22;
-      if (handStr.includes('K')) winRate += 0.16;
-      if (handStr.includes('J') || handStr.includes('Q')) winRate += 0.12;
-      if (currentCards.my[0] && currentCards.my[1] && currentCards.my[0][0] === currentCards.my[1][0]) winRate += 0.28;
+      const ranks = currentCards.my.map(c => c.slice(0, -1));
+      if (ranks.includes('A')) winRate += 0.22;
+      if (ranks.includes('K')) winRate += 0.16;
+      if (ranks.includes('Q') || ranks.includes('J')) winRate += 0.12;
+      if (ranks[0] === ranks[1]) winRate += 0.28; // 對子
 
       winRate = Math.max(0.04, winRate / (opp * 0.45));
 
